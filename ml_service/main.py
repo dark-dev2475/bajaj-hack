@@ -1,59 +1,62 @@
-import document_parser
 import os
-from pinecone import Pinecone, ServerlessSpec
-from openai import OpenAI
 import logging
+import pinecone
+from openai import OpenAI
+
+# Import our custom query parser
+
 from query_parser.main_parser import get_structured_query
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Initialize clients
-pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-def upload_to_pinecone(data: list, index_name: str):
-    print(f"\n--- 4. Uploading to Pinecone Index '{index_name}' ---")
-    index = pc.Index(index_name)
-    vectors_to_upsert = []
-    for i, item in enumerate(data):
-        vectors_to_upsert.append({
-            "id": f"chunk_{i}",
-            "values": item["embedding"],
-            "metadata": {
-                "text": item["chunk_text"],
-                "source": item["metadata"]["source_file"]
-            }
-        })
-    index.upsert(vectors=vectors_to_upsert, batch_size=100)
-    print("  > Upload complete.")
-
-def test_query_parser():
+# --- QUERY PROCESSING & SEARCH PIPELINE (DAY 4 & 5) ---
+def process_and_search(index_name: str, raw_query: str):
     """
-    Tests the structured query extraction functionality using the new parser.
+    Processes a raw query and searches the vector DB.
     """
-    sample_query = "I have a personal accident policy. I'm 32 years old. Yesterday, I fell down the stairs at my home in Lucknow and fractured my arm."
+    # Initialize clients
+    pc = pinecone.Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+    openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+    logging.info("--- Starting Query Processing & Search ---")
     
-    logging.info(f"Original Query: \"{sample_query}\"")
-    structured_query = get_structured_query(sample_query)
-    
+    # Step 1: Parse the raw query to get structured data (Day 4)
+    structured_query = get_structured_query(raw_query)
     if structured_query:
-        print("\n--- Structured Query Output (JSON) ---")
+        print("\n--- Structured Query (from Day 4) ---")
         print(structured_query.model_dump_json(indent=2))
     else:
-        print("\n--- Failed to parse the query ---")
+        logging.error("Failed to parse query.")
+        return
 
-def run_ingestion_pipeline():
-    index_name = "polisy-search"
-    ingested_docs = document_parser.ingest_documents()
-    if not ingested_docs: return
-    chunked_docs = document_parser.chunk_documents(ingested_docs)
-    final_data = document_parser.generate_embeddings(chunked_docs)
-    upload_to_pinecone(final_data, index_name)
+    # Step 2: Perform semantic search on the vector DB (Day 5)
+    logging.info("Performing semantic search with the original query...")
+    index = pc.Index(index_name)
+    
+    query_embedding = openai_client.embeddings.create(
+        input=[raw_query],
+        model="text-embedding-3-small"
+    ).data[0].embedding
+    
+    results = index.query(
+        vector=query_embedding,
+        top_k=3,
+        include_metadata=True
+    )
+    
+    print("\n--- Semantic Search Results (from Day 5) ---")
+    for match in results['matches']:
+        print(f"  - Score: {match['score']:.4f}")
+        print(f"    Source: {match['metadata']['source']}")
+        print(f"    Text: {match['metadata']['text']}\n")
 
-    # Test query parsing after upload
-    test_query_parser()
 
-# ✅ Single entry point
 if __name__ == "__main__":
-    run_ingestion_pipeline()
+    INDEX_NAME = "polisy-search"
+    
+    # Define the query you want to test
+    test_query = "I'm 32 years old and I fractured my arm at home in Lucknow, is it covered under my personal accident policy?"
+    
+    # Run the query processing and search
+    process_and_search(index_name=INDEX_NAME, raw_query=test_query)
