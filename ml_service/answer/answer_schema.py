@@ -4,7 +4,7 @@ from typing import List
 class Justification(BaseModel):
     source: str
     text: str
-    relevance: float  # <-- Add this field
+    # relevance: float  # <-- Add this field
 
 class FinalAnswer(BaseModel):
     Decision: str
