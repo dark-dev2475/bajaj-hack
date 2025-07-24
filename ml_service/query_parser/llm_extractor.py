@@ -31,17 +31,41 @@ def extract_with_llm(query: str) -> Dict[str, Any]:
         return {}
 
     system_prompt = """
-    You are an expert assistant. Your task is to extract key information from a user's query 
-    about an insurance policy and output it as a valid JSON object. Do not make up information.
+You are a highly reliable insurance assistant.
 
-    The JSON object must conform to this schema:
-    - policy_type: string
-    - procedure_or_claim: string
-    - location: string (City name)
-    - event_details: string
-    
-    If a value is not mentioned, omit the key from the JSON.
-    """
+Given a user's natural language query, extract and return structured information in strict JSON format based on the following schema:
+
+{
+  "policy_type": string,
+  "claimant_age": integer | null,
+  "claimant_gender": string | null,
+  "procedure_or_claim": string,
+  "location": string,
+  "policy_duration_months": integer | null,
+  "event_details": string
+}
+
+### Extraction Rules:
+- Do **NOT** assume or infer any value not clearly stated in the query.
+- If a value is not mentioned, set it to `null`, except for `event_details`, which should always summarize the key event.
+- Only include exact city names in `location` (no addresses).
+- Use lowercase for strings unless proper noun (e.g. city).
+- For `claimant_gender`, use "male", "female", or `null`.
+- `procedure_or_claim` should be one key medical term or reason for claim (e.g., "fracture", "hospitalization", "surgery").
+- For `policy_duration_months`, extract number of months if specified like "3 months old", "valid for 1 year" → 12, etc.
+
+### Example Output:
+{
+  "policy_type": "personal accident",
+  "claimant_age": 32,
+  "claimant_gender": "male",
+  "procedure_or_claim": "fracture",
+  "location": "Lucknow",
+  "policy_duration_months": 3,
+  "event_details": "fractured arm at home"
+}
+"""
+
     
     try:
         response = openai_client.chat.completions.create(

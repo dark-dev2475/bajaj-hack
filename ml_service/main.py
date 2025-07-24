@@ -1,62 +1,47 @@
-import os
+# ml_service/main.py
 import logging
-import pinecone
-from openai import OpenAI
-
-# Import our custom query parser
-
-from query_parser.main_parser import get_structured_query
+from query_parser import main_parser as query_parser
+import search
+from answer import answer_generator # Import our new answer generator module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- QUERY PROCESSING & SEARCH PIPELINE (DAY 4 & 5) ---
-def process_and_search(index_name: str, raw_query: str):
+def main():
     """
-    Processes a raw query and searches the vector DB.
+    Main function to run the full RAG query pipeline.
     """
-    # Initialize clients
-    pc = pinecone.Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-    openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    INDEX_NAME = "polisy-search"
+    raw_query = "I'm 32 years old and I fractured my arm at home in Lucknow, is it covered under my personal accident policy?"
+    logging.info(f"Processing query: \"{raw_query}\"")
 
-    logging.info("--- Starting Query Processing & Search ---")
-    
-    # Step 1: Parse the raw query to get structured data (Day 4)
-    structured_query = get_structured_query(raw_query)
-    if structured_query:
-        print("\n--- Structured Query (from Day 4) ---")
-        print(structured_query.model_dump_json(indent=2))
-    else:
-        logging.error("Failed to parse query.")
-        return
+    # Day 4: Parse query
+    structured_query = query_parser.get_structured_query(raw_query)
+    if not structured_query: return
+    print("\n--- Structured Query (Day 4) ---")
+    print(structured_query.model_dump_json(indent=2))
 
-    # Step 2: Perform semantic search on the vector DB (Day 5)
-    logging.info("Performing semantic search with the original query...")
-    index = pc.Index(index_name)
-    
-    query_embedding = openai_client.embeddings.create(
-        input=[raw_query],
-        model="text-embedding-3-small"
-    ).data[0].embedding
-    
-    results = index.query(
-        vector=query_embedding,
-        top_k=3,
-        include_metadata=True
+    # Day 5: Retrieve relevant documents
+    search_results = search.perform_search(
+        raw_query=raw_query,
+        structured_query=structured_query,
+        index_name=INDEX_NAME
     )
-    
-    print("\n--- Semantic Search Results (from Day 5) ---")
-    for match in results['matches']:
-        print(f"  - Score: {match['score']:.4f}")
-        print(f"    Source: {match['metadata']['source']}")
-        print(f"    Text: {match['metadata']['text']}\n")
+    if not search_results:
+        print("No relevant documents found.")
+        return
+    print("\n--- Retrieved Documents (Day 5) ---")
+    for r in search_results: print(f"  - Source: {r['metadata']['source']}, Score: {r['score']:.4f}")
 
+    # Day 6: Generate final answer
+    final_answer = answer_generator.generate_answer(raw_query, search_results)
+    if not final_answer:
+        print("Could not generate a final answer from the LLM.")
+        return
+        
+    print("\n--- Final Answer (Day 6) ---")
+    print(final_answer.model_dump_json(indent=2))
 
 if __name__ == "__main__":
-    INDEX_NAME = "polisy-search"
-    
-    # Define the query you want to test
-    test_query = "I'm 32 years old and I fractured my arm at home in Lucknow, is it covered under my personal accident policy?"
-    
-    # Run the query processing and search
-    process_and_search(index_name=INDEX_NAME, raw_query=test_query)
+    # Ensure your data is already ingested by running ingest.py separately
+    main()
