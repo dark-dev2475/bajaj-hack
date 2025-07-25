@@ -1,45 +1,81 @@
-// api_server/index.js
 const express = require('express');
 const axios = require('axios');
+const multer = require('multer');
+const FormData = require('form-data');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = 3000;
-const PYTHON_API_URL = 'http://localhost:5000/process_query';
+const PYTHON_API_URL = 'http://localhost:5000';
 
-// Middleware to parse JSON bodies
+// Multer Configuration for File Uploads
+const upload = multer({ dest: 'uploads/' });
+
 app.use(express.json());
 
-// Define the main REST endpoint: POST /evaluate [cite: user-provided source]
+// --- Endpoint to Evaluate a Query ---
 app.post('/evaluate', async (req, res) => {
     console.log("Received request on /evaluate");
-
-    // 1. Receive JSON with query [cite: user-provided source]
     const { query } = req.body;
     if (!query) {
-        return res.status(400).json({ error: 'Invalid request: "query" is required.' });
+        return res.status(400).json({ error: 'Request body must contain a "query" field.' });
     }
 
     try {
-        // 2. Call the Python microservice [cite: user-provided source]
         console.log(`Forwarding query to Python service: "${query}"`);
-        const pythonResponse = await axios.post(PYTHON_API_URL, {
+        const pythonResponse = await axios.post(`${PYTHON_API_URL}/process_query`, {
             raw_query: query
         });
-
-        // 3. Return the JSON response from the Python service [cite: user-provided source]
-        console.log("Successfully received response from Python service.");
         res.json(pythonResponse.data);
-
     } catch (error) {
         console.error("Error calling Python service:", error.message);
-        // Forward the error status and message if available
-        if (error.response) {
-            res.status(error.response.status).json(error.response.data);
-        } else {
-            res.status(500).json({ error: 'An internal server error occurred.' });
-        }
+        const status = error.response ? error.response.status : 500;
+        const data = error.response ? error.response.data : { error: 'Internal server error.' };
+        res.status(status).json(data);
     }
 });
+
+// --- Endpoint to Ingest Multiple Documents ---
+app.post('/ingest-documents', upload.array('documents'), async (req, res) => {
+    console.log(`Received ${req.files.length} file(s) for ingestion.`);
+    
+    if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ error: 'No files were uploaded.' });
+    }
+
+    const results = [];
+    for (const file of req.files) {
+        try {
+            const formData = new FormData();
+            formData.append('document', fs.createReadStream(file.path), file.originalname);
+
+            console.log(`Sending file ${file.originalname} to Python service...`);
+            
+            // Note the updated URL to match our new blueprint structure
+            const response = await axios.post(`${PYTHON_API_URL}/ingest-file`, formData, {
+                headers: { ...formData.getHeaders() }
+            });
+
+            results.push({ file: file.originalname, status: 'Success', message: response.data.message });
+        } catch (error) {
+            console.error(`Failed to ingest ${file.originalname}:`, error.message);
+            results.push({ file: file.originalname, status: 'Error', message: error.message });
+        } finally {
+            fs.unlinkSync(file.path);
+        }
+    }
+
+    res.status(200).json({
+        message: 'Ingestion process completed.',
+        results: results
+    });
+});
+
+
 app.listen(PORT, () => {
     console.log(`Node.js API server listening on port ${PORT}`);
+    if (!fs.existsSync('uploads')){
+        fs.mkdirSync('uploads');
+    }
 });

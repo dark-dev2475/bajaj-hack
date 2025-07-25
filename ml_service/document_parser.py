@@ -1,18 +1,26 @@
-# ml_service/document_parser.py
 import fitz  # PyMuPDF
 import docx
 from pathlib import Path
 from langdetect import detect
+from typing import Optional, List, Dict, Any
 
-def ingest_documents():
+# --- UPDATED ingest_documents function ---
+def ingest_documents(specific_file: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Reads all documents from the 'data' folder, extracts text,
-    and identifies the language.
+    Reads documents, extracts text, and identifies the language.
+    Can either scan the 'data' directory or process a single specified file.
     """
-    data_path = Path("./data")
     documents = []
     
-    for file_path in data_path.glob("*"):
+    if specific_file:
+        # If a specific file path is provided, process only that file.
+        file_paths = [Path(specific_file)]
+    else:
+        # Otherwise, scan the default 'data' directory.
+        data_path = Path("./data")
+        file_paths = list(data_path.glob("*"))
+
+    for file_path in file_paths:
         raw_text = ""
         if file_path.suffix == ".pdf":
             with fitz.open(file_path) as doc:
@@ -22,19 +30,13 @@ def ingest_documents():
             raw_text = "\n".join(para.text for para in doc.paragraphs)
         
         if raw_text:
-            # Normalize text by removing extra whitespace
             clean_text = " ".join(raw_text.split())
-            
-            # Identify language per doc 
             lang = detect(clean_text)
-            
             documents.append({
                 "source_file": str(file_path.name),
                 "raw_text": clean_text,
                 "language": lang
             })
-            print(f"Successfully ingested {file_path.name} ({lang})")
-
     return documents
 
 if __name__ == "__main__":

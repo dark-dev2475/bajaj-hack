@@ -1,24 +1,28 @@
+# ml_service/main.py
+# This is the complete code for your Python service.
+
+import os
 import logging
 from flask import Flask, request, jsonify
-import query_parser
+from werkzeug.utils import secure_filename
+
+# Import your custom modules
+from query_parser import main_parser as query_parser
 import search
-import answer_generator
+from answer import answer_generator
+import document_parser # We need this for the ingestion logic
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize the Flask app
 app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'uploads_from_api'
 
+# --- Endpoint to Process a Query (from Day 8) ---
 @app.route('/process_query', methods=['POST'])
 def process_query():
-    """
-    This is the main endpoint for the Python ML service.
-    It receives a query, runs the full RAG pipeline, and returns the answer.
-    """
     INDEX_NAME = "polisy-search"
-    
-    # Receive JSON with the query from the Node.js server [cite: user-provided source]
     data = request.get_json()
     if not data or 'raw_query' not in data:
         return jsonify({"error": "Invalid request: 'raw_query' is required."}), 400
@@ -27,12 +31,10 @@ def process_query():
     logging.info(f"Received query for processing: \"{raw_query}\"")
 
     try:
-        # Day 4: Parse the query
         structured_query = query_parser.get_structured_query(raw_query)
         if not structured_query:
             return jsonify({"error": "Failed to parse query."}), 500
 
-        # Day 5: Retrieve relevant documents
         search_results = search.perform_search(
             raw_query=raw_query,
             structured_query=structured_query,
@@ -41,23 +43,78 @@ def process_query():
         if not search_results:
             return jsonify({"error": "No relevant documents found."}), 404
 
-        # Day 6: Generate final answer
         final_answer = answer_generator.generate_answer(
             raw_query=raw_query, 
             search_results=search_results,
-            query_language="en" # Assuming English for now, can be enhanced
+            query_language="en" # Assuming English for now
         )
         if not final_answer:
             return jsonify({"error": "Failed to generate a final answer."}), 500
         
-        # Return the final JSON response [cite: user-provided source]
         return jsonify(final_answer.model_dump())
 
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
+# --- NEW Endpoint to Ingest a Single File ---
+@app.route('/ingest-file', methods=['POST'])
+def ingest_file():
+    INDEX_NAME = "polisy-search"
+    if 'document' not in request.files:
+        return jsonify({"error": "No file part in the request"}), 400
+    
+    file = request.files['document']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    if file:
+        filename = secure_filename(file.filename)
+        # Save the file temporarily to a dedicated folder
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(save_path)
+        logging.info(f"File '{filename}' saved temporarily for processing.")
+
+        try:
+            # --- Run the Ingestion Pipeline for this single file ---
+            logging.info(f"1. Ingesting '{filename}'...")
+            # We modify the ingest_documents function to take a specific path
+            ingested_docs = document_parser.ingest_documents(specific_file=save_path)
+            
+            logging.info("2. Chunking document...")
+            chunked_docs = document_parser.chunk_documents(ingested_docs)
+            
+            logging.info("3. Generating embeddings...")
+            final_data = document_parser.generate_embeddings(chunked_docs)
+            
+            logging.info(f"4. Uploading {len(final_data)} vectors to Pinecone...")
+            search.pc.Index(INDEX_NAME).upsert(
+                vectors=[{
+                    "id": f"{filename}_chunk_{i}", # Create a unique ID
+                    "values": item["embedding"],
+                    "metadata": {"text": item["chunk_text"], "source": filename}
+                } for i, item in enumerate(final_data)],
+                batch_size=100
+            )
+            
+            # Clean up the temporary file
+            os.remove(save_path)
+            
+            return jsonify({"message": f"Successfully ingested and processed {filename}"}), 200
+
+        except Exception as e:
+            logging.error(f"Failed to process file {filename}: {e}")
+            # Clean up even if there's an error
+            if os.path.exists(save_path):
+                os.remove(save_path)
+            return jsonify({"error": f"Failed to process file {filename}"}), 500
+    
+    return jsonify({"error": "An unknown error occurred"}), 500
+
 
 if __name__ == "__main__":
-    # Run the Flask server on port 5000
+    # Create uploads directory if it doesn't exist
+    if not os.path.exists(app.config['UPLOAD_FOLDER']):
+        os.makedirs(app.config['UPLOAD_FOLDER'])
+    # Run the Flask server
     app.run(port=5000, debug=True)

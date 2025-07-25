@@ -17,33 +17,39 @@ except TypeError:
 
 def _create_prompt(raw_query: str, search_results: List[Dict[str, Any]], query_language: str) -> str:
     """
-    Creates a detailed prompt, now including the language of the user's query.
+    Creates a detailed prompt, now including language context and relevance scoring in justifications.
     """
     context = ""
     for i, result in enumerate(search_results):
-        context += f"Source {i+1} (from file: {result['metadata']['source']}):\n"
-        context += f"\"{result['metadata']['text']}\"\n\n"
+        source = result['metadata'].get('source', 'unknown')
+        text = result['metadata'].get('text', '')
+        context += f"Source {i+1} (from file: {source}):\n\"{text.strip()}\"\n\n"
 
-    # --- UPDATED PROMPT ---
     prompt_template = f"""
-    You are an expert insurance claim analyst. Your task is to analyze a user's query and a set of relevant policy clauses to make a coverage decision.
+You are an expert insurance claim analyst. Your task is to analyze a user's query and a set of relevant policy clauses to make a coverage decision.
 
-    **Policy Clauses (Context in English):**
-    ---
-    {context}
-    ---
+---
+**Policy Clauses (in English):**
+{context}
+---
 
-    **User's Query (in {query_language.upper()}):** ---
-    "{raw_query}"
-    ---
+**User's Query (in {query_language.upper()}):**
+"{raw_query.strip()}"
+---
 
-    **Your Instructions:**
-    Analyze the context to answer the user's query. Your final output MUST be a single, valid JSON object with the specified keys and data types. Do not include any other text.
-    - "Decision": Must be one of "Covered", "Not Covered", or "Partial Coverage".
-    - "PayoutAmount": Must be an integer. If not applicable, use 0.
-    - "Confidence": A float between 0.0 and 1.0.
-    - "Justifications": A list of objects. Each object must have lowercase keys "source" (string) and "text" (string), citing the exact text from the context.
-    """
+**Your Instructions:**
+Carefully examine the policy clauses and determine whether the user's query is covered. Return a single, valid JSON object with the following keys (and no other output):
+
+- "Decision": One of "Covered", "Not Covered", or "Partial Coverage".
+- "PayoutAmount": An integer. Use 0 if no payout is applicable.
+- "Confidence": A float between 0.0 and 1.0 representing how confident you are in your decision.
+- "Justifications": A list of objects. Each object must contain:
+  - "source" (string): Reference to the source file or clause.
+  - "text" (string): A short excerpt from the policy clause that supports your decision.
+  - "relevance" (float): A number between 0.0 and 1.0 showing how strongly this clause supports your decision. A value closer to 1 means highly relevant.
+
+Respond only with the JSON object. Do not include any preamble, explanations, or extra formatting.
+"""
     return prompt_template
 
 def generate_answer(raw_query: str, search_results: List[Dict[str, Any]], query_language: str) -> Optional[FinalAnswer]:
