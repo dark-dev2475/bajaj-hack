@@ -7,7 +7,7 @@ const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 
-
+const PYTHON_API_URL = 'http://localhost:5000';
 
 
 // Multer Configuration for File Uploads

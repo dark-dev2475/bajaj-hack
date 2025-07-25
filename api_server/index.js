@@ -8,7 +8,7 @@ const evaluateQuery = require('./routes/evaluate.query'); // Assuming this is th
 const ingestDoc =require('./routes/ingestion.route')
 const app = express();
 const PORT = 3000;
-const PYTHON_API_URL = 'http://localhost:5000';
+
 
 
 app.use(express.json());

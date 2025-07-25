@@ -1,8 +1,8 @@
 // route for processing evaluation queries
 const express = require('express');
 const router = express.Router();  
-
-
+const PYTHON_API_URL = 'http://localhost:5000';
+const axios = require('axios');
 router.post('/evaluate', async (req, res) => {
     console.log("Received request on /evaluate");
     const { query } = req.body;
