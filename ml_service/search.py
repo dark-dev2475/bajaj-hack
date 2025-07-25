@@ -1,87 +1,137 @@
 # ml_service/search.py
-"""
-Handles the semantic search and retrieval logic for the application.
-"""
+
 import os
 import logging
+from typing import List, Dict, Any, Optional
+
 import pinecone
 from openai import OpenAI
-from query_parser.schema import PolicyQuery
-from typing import List, Dict, Any
 from langdetect import detect
+from query_parser.schema import PolicyQuery
 
-# Initialize clients from environment variables
-try:
-    pc = pinecone.Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-    openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-except TypeError:
-    logging.error("API keys not found. Please set environment variables.")
-    pc = None
-    openai_client = None
+# — Sync clients (lazily initialized) —
+_sync_openai: Optional[OpenAI] = None
+_pinecone_client: Optional[pinecone.Pinecone] = None
+
+def _init_sync_clients():
+    global _sync_openai, _pinecone_client
+    if not _sync_openai:
+        _sync_openai = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    if not _pinecone_client:
+        _pinecone_client = pinecone.Pinecone(api_key=os.environ["PINECONE_API_KEY"])
 
 
-def _translate_query_if_needed(query: str) -> str:
-    """Detects language and translates to English if necessary."""
+# — Async clients: you should import and pass these from your `clients.py` —
+# from clients import pinecone_client, openai_async_client
+
+
+async def perform_search_async(
+    raw_query: str,
+    index_name: str,
+    namespace: str,
+    pinecone_client: pinecone.Pinecone,
+    openai_client
+) -> List[Dict[str, Any]]:
+    """
+    Asynchronously embeds the query and runs a Pinecone search.
+    """
+    # 1) Embed query
     try:
-        if detect(query) != 'en':
-            logging.info(f"Translating non-English query to English.")
-            response = openai_client.chat.completions.create(
-                model="gpt-4-turbo",
-                messages=[{"role": "user", "content": f"Translate the following text to English: \"{query}\""}]
-            )
-            return response.choices[0].message.content
+        resp = await openai_client.embeddings.create(
+            input=[raw_query],
+            model="text-embedding-3-small"
+        )
+        query_vec = resp.data[0].embedding
     except Exception as e:
-        logging.error(f"Error during translation, using original query: {e}")
-    return query
-
-
-def _rerank_results(results: List[Dict[str, Any]], structured_query: PolicyQuery) -> List[Dict[str, Any]]:
-    """
-    Refines search results by boosting scores of chunks containing keywords.
-    """
-    logging.info("Re-ranking search results for precision...")
-    
-    # Extract keywords from the structured query to check for
-    keywords = [structured_query.procedure_or_claim, structured_query.location]
-    keywords = [k.lower() for k in keywords if k] # Filter out None values and convert to lowercase
-
-    if not keywords:
-        logging.info("No keywords for re-ranking. Returning original results.")
-        return results
-
-    for match in results:
-        text_lower = match['metadata']['text'].lower()
-        bonus = 0.0
-        for keyword in keywords:
-            if keyword in text_lower:
-                bonus += 0.1  # Add a small score bonus for each keyword match
-        match['score'] += bonus
-    
-    # Sort the results again based on the new, boosted score
-    return sorted(results, key=lambda x: x['score'], reverse=True)
-
-def perform_search(raw_query: str, structured_query: PolicyQuery, index_name: str) -> List[Dict[str, Any]]:
-    if not pc or not openai_client:
-        logging.error("Clients not initialized.")
+        logging.error(f"[Async] OpenAI embedding failed: {e}")
         return []
 
-    # --- NEW: Translate the query first ---
-    query_for_embedding = _translate_query_if_needed(raw_query)
-    
-    # 1. Embed the (now guaranteed English) query
-    logging.info("Embedding the user query...")
-    query_embedding = openai_client.embeddings.create(
-        input=[query_for_embedding],
-        model="text-embedding-3-small"
-    ).data[0].embedding
+    # 2) Search vector DB
+    try:
+        index = pinecone_client.Index(index_name)
+        response = index.query(
+            vector=query_vec,
+            top_k=5,
+            include_metadata=True,
+            namespace=namespace
+        )
+        return response.get("matches", [])
+    except Exception as e:
+        logging.error(f"[Async] Pinecone query failed: {e}")
+        return []
 
-    # (The rest of the function for querying and re-ranking remains the same)
-    logging.info(f"Querying vector DB...")
-    index = pc.Index(index_name)
-    results = index.query(
-        vector=query_embedding,
-        top_k=3, 
-        include_metadata=True
-    )
-    
-    return results['matches'] # For simplicity, returning direct results for now.
+
+def perform_search(
+    raw_query: str,
+    index_name: str,
+    namespace: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Synchronously embeds the query and runs a Pinecone search.
+    """
+    _init_sync_clients()
+    if not _sync_openai or not _pinecone_client:
+        logging.error("Sync clients not initialized.")
+        return []
+
+    # 1) Possibly translate
+    query = raw_query
+    try:
+        if detect(raw_query) != "en":
+            logging.info("Translating query to English...")
+            trans_resp = _sync_openai.chat.completions.create(
+                model="gpt-4-turbo",
+                messages=[{"role": "user", "content": f"Translate to English: \"{raw_query}\""}]
+            )
+            query = trans_resp.choices[0].message.content.strip()
+    except Exception:
+        # If translation fails, just proceed
+        pass
+
+    # 2) Embed
+    try:
+        vec = _sync_openai.embeddings.create(
+            input=[query],
+            model="text-embedding-3-small"
+        ).data[0].embedding
+    except Exception as e:
+        logging.error(f"OpenAI embedding failed: {e}")
+        return []
+
+    # 3) Search
+    try:
+        index = _pinecone_client.Index(index_name)
+        resp = index.query(
+            vector=vec,
+            top_k=5,
+            include_metadata=True,
+            namespace=namespace
+        )
+        return resp.get("matches", [])
+    except Exception as e:
+        logging.error(f"Pinecone query failed: {e}")
+        return []
+
+
+def _rerank_results(
+    results: List[Dict[str, Any]],
+    structured_query: PolicyQuery
+) -> List[Dict[str, Any]]:
+    """
+    Boosts result scores based on keywords from structured_query.
+    """
+    keywords = [
+        structured_query.procedure_or_claim,
+        structured_query.location
+    ]
+    keywords = [k.lower() for k in keywords if k]
+
+    if not keywords:
+        return results
+
+    for r in results:
+        text = r.get("metadata", {}).get("text", "").lower()
+        bonus = sum(0.1 for kw in keywords if kw in text)
+        r["score"] = r.get("score", 0) + bonus
+
+    return sorted(results, key=lambda x: x["score"], reverse=True)

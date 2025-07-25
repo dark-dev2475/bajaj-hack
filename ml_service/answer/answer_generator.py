@@ -1,77 +1,73 @@
 # ml_service/answer_generator.py
 import os
-import json
 import logging
-from openai import OpenAI, APIError
 from typing import Optional, List, Dict, Any
 
+from openai import APIError
 from config import OPENAI_CHAT_MODEL
 from answer.answer_schema import FinalAnswer
+from clients import openai_async_client  # use initialized client
 
-# Initialize client
-try:
-    openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-except TypeError:
-    logging.error("OPENAI_API_KEY not found.")
-    openai_client = None
 
 def _create_prompt(raw_query: str, search_results: List[Dict[str, Any]], query_language: str) -> str:
     """
-    Creates a detailed prompt, now including language context and relevance scoring in justifications.
+    Builds a structured prompt with context clauses for the LLM.
     """
     context = ""
-    for i, result in enumerate(search_results):
+    for i, result in enumerate(search_results, 1):
         source = result['metadata'].get('source', 'unknown')
-        text = result['metadata'].get('text', '')
-        context += f"Source {i+1} (from file: {source}):\n\"{text.strip()}\"\n\n"
+        text = result['metadata'].get('text', '').strip()
+        context += f"Source {i} (from file: {source}):\n\"{text}\"\n\n"
 
-    prompt_template = f"""
-You are an expert insurance claim analyst. Your task is to analyze a user's query and a set of relevant policy clauses to make a coverage decision.
-
+    return f"""
+You are an empathetic insurance claims assistant. Analyze the user's query and provided policy clauses to produce a structured JSON response.
 ---
-**Policy Clauses (in English):**
+Policy Clauses:
 {context}
 ---
-
-**User's Query (in {query_language.upper()}):**
-"{raw_query.strip()}"
+User Query ({query_language.upper()}): "{raw_query.strip()}"
 ---
+Respond with a JSON object matching this schema:
+{{
+  "Decision": string ("Covered","Not Covered","Partial Coverage"),
+  "Reasoning": string,
+  "NextSteps": string,
+  "PayoutAmount": integer,
+  "Confidence": float (0.0-1.0),
+  "Justifications": [
+    {{"source": string, "text": string, "relevance": float}}
+  ]
+}}
+Do not include any other text.""".strip()
 
-**Your Instructions:**
-Carefully examine the policy clauses and determine whether the user's query is covered. Return a single, valid JSON object with the following keys (and no other output):
 
-- "Decision": One of "Covered", "Not Covered", or "Partial Coverage".
-- "PayoutAmount": An integer. Use 0 if no payout is applicable.
-- "Confidence": A float between 0.0 and 1.0 representing how confident you are in your decision.
-- "Justifications": A list of objects. Each object must contain:
-  - "source" (string): Reference to the source file or clause.
-  - "text" (string): A short excerpt from the policy clause that supports your decision.
-  - "relevance" (float): A number between 0.0 and 1.0 showing how strongly this clause supports your decision. A value closer to 1 means highly relevant.
-
-Respond only with the JSON object. Do not include any preamble, explanations, or extra formatting.
-"""
-    return prompt_template
-
-def generate_answer(raw_query: str, search_results: List[Dict[str, Any]], query_language: str) -> Optional[FinalAnswer]:
+async def generate_answer_async(
+    raw_query: str,
+    search_results: List[Dict[str, Any]],
+    query_language: str,
+    openai_client: Any = None
+) -> Optional[FinalAnswer]:
     """
-    Generates a structured JSON answer, passing the query language to the prompt.
+    Asynchronously calls the LLM to generate a JSON-formatted answer.
     """
-    if not openai_client:
+    # Use the passed client or fallback to the globally imported one
+    client = openai_client or openai_async_client
+    if not client:
+        logging.error("OpenAI client not initialized.")
         return None
-    
-    # Pass the detected language to the prompt creator
+
     prompt = _create_prompt(raw_query, search_results, query_language)
-    logging.info("Sending final prompt (with language context) to LLM...")
+    logging.info("Sending prompt to LLM...")
 
     try:
-        response = openai_client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=OPENAI_CHAT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
-        llm_output_str = response.choices[0].message.content
-        validated_answer = FinalAnswer.model_validate_json(llm_output_str)
-        return validated_answer
+        llm_output = response.choices[0].message.content
+        return FinalAnswer.model_validate_json(llm_output)
+
     except (APIError, Exception) as e:
-        logging.error(f"Error during final answer generation: {e}")
+        logging.error(f"LLM generation failed: {e}")
         return None
