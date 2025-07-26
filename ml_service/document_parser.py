@@ -7,6 +7,7 @@ from langdetect import detect
 from typing import Optional, List, Dict, Any
 from openai import OpenAI, AsyncOpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import asyncio
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -77,38 +78,59 @@ def chunk_documents(documents: list, chunk_size: int = 800, overlap: int = 100) 
     return all_chunks
 
 # --- Embedding: Sync ---
-def generate_embeddings(chunks_with_metadata: list) -> list:
-    logging.info("Generating embeddings (sync)...")
-    texts = [chunk["chunk_text"] for chunk in chunks_with_metadata]
+def generate_embeddings(chunks_with_metadata: list, batch_size=100) -> list:
+    logging.info("Generating embeddings in batches...")
 
-    try:
-        response = client.embeddings.create(
-            input=texts,
-            model="text-embedding-3-small"
-        )
-        for i, chunk in enumerate(chunks_with_metadata):
-            chunk["embedding"] = response.data[i].embedding
-        return chunks_with_metadata
-    except Exception as e:
-        logging.error(f"Embedding generation failed: {e}")
-        return []
+    embedded_chunks = []
+
+    for i in range(0, len(chunks_with_metadata), batch_size):
+        batch = chunks_with_metadata[i:i+batch_size]
+        texts = [chunk["chunk_text"] for chunk in batch]
+
+        try:
+            response = client.embeddings.create(
+                input=texts,
+                model="text-embedding-3-small"
+            )
+            for j, chunk in enumerate(batch):
+                chunk["embedding"] = response.data[j].embedding
+                embedded_chunks.append(chunk)
+
+        except Exception as e:
+            logging.error(f"Embedding batch {i//batch_size} failed: {e}")
+
+    logging.info(f"Total embedded chunks: {len(embedded_chunks)}")
+    return embedded_chunks
 
 # --- Embedding: Async ---
-async def generate_embeddings_async(chunks_with_metadata: list) -> list:
-    logging.info("Generating embeddings (async)...")
-    texts = [chunk["chunk_text"] for chunk in chunks_with_metadata]
+EMBED_BATCH_SIZE = 500
 
-    try:
-        response = await async_client.embeddings.create(
-            input=texts,
-            model="text-embedding-3-small"
-        )
-        for i, chunk in enumerate(chunks_with_metadata):
-            chunk["embedding"] = response.data[i].embedding
-        return chunks_with_metadata
-    except Exception as e:
-        logging.error(f"Async embedding failed: {e}")
+async def generate_embeddings_async(chunks_with_metadata: list) -> list:
+    """
+    Generates embeddings for chunks asynchronously, batching requests for efficiency and reliability.
+    Batches are processed in parallel and retried up to 3 times on failure.
+    """
+    logging.info("Generating embeddings (async, batched)...")
+    async def embed_batch(batch):
+        texts = [chunk["chunk_text"] for chunk in batch]
+        for _ in range(3):  # Retry up to 3 times
+            try:
+                response = await async_client.embeddings.create(
+                    input=texts,
+                    model="text-embedding-3-small"
+                )
+                for i, chunk in enumerate(batch):
+                    chunk["embedding"] = response.data[i].embedding
+                return batch
+            except Exception as e:
+                logging.error(f"Async embedding failed for batch: {e}")
+                await asyncio.sleep(1)
         return []
+
+    batches = [chunks_with_metadata[i:i+EMBED_BATCH_SIZE] for i in range(0, len(chunks_with_metadata), EMBED_BATCH_SIZE)]
+    results = await asyncio.gather(*(embed_batch(batch) for batch in batches))
+    # Flatten the list of lists
+    return [chunk for batch in results for chunk in batch]
 
 # --- Test Entry Point ---
 if __name__ == "__main__":
