@@ -8,7 +8,7 @@ import pinecone
 from openai import OpenAI
 from langdetect import detect
 from query_parser.schema import PolicyQuery
-
+from clients import client, async_client
 # — Sync clients (singleton pattern) —
 import sys
 

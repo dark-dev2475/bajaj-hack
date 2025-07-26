@@ -1,5 +1,7 @@
 import logging
 import asyncio
+from clients import async_client
+
 
 # --- Embedding: Async ---
 EMBED_BATCH_SIZE = 500

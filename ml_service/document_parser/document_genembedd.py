@@ -1,4 +1,5 @@
 import logging
+from clients import client
 
 def generate_embeddings(chunks_with_metadata: list, batch_size=100) -> list:
     logging.info("Generating embeddings in batches...")

@@ -1,83 +1,92 @@
 import os
 import logging
-from flask import Flask, request, jsonify
-import submission_handler
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List
+import aiofiles
+import uvicorn
 import asyncio
+from submission_handler.handler import handle_submission as submission_handler
+from document_parser.document_ingestion import ingest_documents
+from document_parser.document_chunks import chunk_documents
+from document_parser.document_genembedd import generate_embeddings
 import search
-import document_parser
-from werkzeug.utils import secure_filename
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'  # ❗ Important to define
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # Set 100MB max upload size
-
+# Configuration
+UPLOAD_FOLDER = 'temp_docs'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+MAX_CONTENT_SIZE = 100 * 1024 * 1024  # 100MB
 INDEX_NAME = "polisy-search"
 
-UPLOAD_FOLDER = 'temp_docs'
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- The Single Endpoint for the Submission ---
-@app.route('/hackrx/run', methods=['POST'])
-def run_rag():
-    data = request.get_json()
-    if not data or 'document_url' not in data or 'questions' not in data:
-        return jsonify({"error": "Request must include 'document_url' and 'questions' list."}), 400
+# Initialize FastAPI app
+app = FastAPI()
 
-    doc_url = data['document_url']
-    questions = data['questions']
-    if not isinstance(questions, list) or not all(isinstance(q, str) for q in questions):
-        return jsonify({"error": "'questions' must be a list of strings."}), 400
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    logging.info(f"Received request for document: {doc_url} with {len(questions)} questions.")
+# Request schema for /hackrx/run
+class RAGRequest(BaseModel):
+    document_url: str
+    questions: List[str]
+
+# --- Endpoint 1: Run RAG ---
+@app.post("/hackrx/run")
+async def run_rag(data: RAGRequest):
+    if not data.questions or not isinstance(data.questions, list):
+        raise HTTPException(status_code=400, detail="'questions' must be a non-empty list of strings.")
+
+    logging.info(f"Received RAG request for doc: {data.document_url} with {len(data.questions)} questions.")
 
     try:
-        # Run the asynchronous handler from our synchronous Flask route
-        answers = asyncio.run(submission_handler.handle_submission(doc_url, questions, app.config['UPLOAD_FOLDER']))
-        response_data = {"answers": answers}
-        return jsonify(response_data)
+        answers = await submission_handler(data.document_url, data.questions, UPLOAD_FOLDER,INDEX_NAME)
+        return {"answers": answers}
     except Exception as e:
-        logging.error(f"An error occurred during submission handling: {e}")
-        return jsonify({"error": "An internal server error occurred."}), 500
+        logging.error(f"[RAG Error] {e}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")
 
+# --- Endpoint 2: Ingest File ---
+@app.post("/ingest-file")
+async def ingest_file(document: UploadFile = File(...)):
+    logging.info(f"Received file: {document.filename} of size: {document.size or 'unknown'}")
 
+    if not document.filename:
+        raise HTTPException(status_code=400, detail="No selected file")
 
-
-# --- NEW Endpoint to Ingest a Single File ---
-@app.route('/ingest-file', methods=['POST'])
-def ingest_file():
-    print(f"Received content length: {request.content_length} bytes")
-    if 'document' not in request.files:
-        return jsonify({"error": "No file part in the request"}), 400
-
-    file = request.files['document']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    filename = secure_filename(file.filename)
-    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    filename = os.path.basename(document.filename)
+    save_path = os.path.join(UPLOAD_FOLDER, filename)
 
     try:
-        # Save file
-        file.save(save_path)
-        logging.info(f"File '{filename}' saved for processing.")
+        # Save uploaded file
+        async with aiofiles.open(save_path, 'wb') as out_file:
+            content = await document.read()
+            if len(content) > MAX_CONTENT_SIZE:
+                raise HTTPException(status_code=413, detail="File too large")
+            await out_file.write(content)
+
+        logging.info(f"Saved file: {filename}")
 
         # Step 1: Parse
-        ingested_docs = document_parser.ingest_documents(specific_file=save_path)
+        ingested_docs = ingest_documents(specific_file=save_path)
         if not ingested_docs:
             raise ValueError("No documents parsed.")
 
         # Step 2: Chunk
-        chunked_docs = document_parser.chunk_documents(ingested_docs)
+        chunked_docs = chunk_documents(ingested_docs)
         if not chunked_docs:
             raise ValueError("No chunks created.")
 
         # Step 3: Embeddings
-        final_data = document_parser.generate_embeddings(chunked_docs)
+        final_data = generate_embeddings(chunked_docs)
         if not final_data or not isinstance(final_data, list):
             raise ValueError("Embedding generation failed or returned wrong format.")
 
@@ -88,30 +97,23 @@ def ingest_file():
             "metadata": {"text": item["chunk_text"], "source": filename}
         } for i, item in enumerate(final_data)]
 
-        if not vectors or any(type(v["values"]) is str for v in vectors):
-            raise ValueError("Invalid vector format passed.")
+        if not vectors or any(isinstance(v["values"], str) for v in vectors):
+            raise ValueError("Invalid vector format")
 
         search.pc.Index(INDEX_NAME).upsert(vectors=vectors, batch_size=100)
-        logging.info(f"Uploaded {len(vectors)} vectors.")
+        logging.info(f"Uploaded {len(vectors)} vectors to Pinecone.")
 
-        return jsonify({
+        return {
             "message": f"Successfully processed {filename}",
             "chunks_uploaded": len(vectors)
-        }), 200
+        }
 
     except Exception as e:
         logging.error(f"[Ingest Error] {e}")
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        # Ensure file is always cleaned up
         if os.path.exists(save_path):
             os.remove(save_path)
 
-
-if __name__ == "__main__":
-    # Create uploads directory if it doesn't exist
-    if not os.path.exists(app.config['UPLOAD_FOLDER']):
-        os.makedirs(app.config['UPLOAD_FOLDER'])
-    # Run the Flask server
-    app.run(port=5000, debug=True)
+# Run using: uvicorn main:app --reload --port 5000

@@ -1,6 +1,6 @@
 import logging
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
+from clients import client
 # --- Chunking ---
 def chunk_documents(documents: list, chunk_size: int = 800, overlap: int = 100) -> list:
     splitter = RecursiveCharacterTextSplitter(

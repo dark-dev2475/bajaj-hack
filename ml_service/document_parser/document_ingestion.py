@@ -4,6 +4,7 @@ from pathlib import Path
 import fitz  # PyMuPDF
 import docx
 from langdetect import detect
+from clients import client
 
 
 # --- Document Ingestion ---

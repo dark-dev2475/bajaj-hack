@@ -5,6 +5,9 @@ import logging
 from dotenv import load_dotenv
 from pinecone import Pinecone, ServerlessSpec
 from openai import AsyncOpenAI
+# from openai import AsyncOpenAI
+from openai import OpenAI
+
 
 # Load environment variables from .env
 load_dotenv()
@@ -13,7 +16,8 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV      = os.getenv("PINECONE_ENVIRONMENT")  # e.g. "aws-us-west-2"
 OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY")
-
+async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Validate presence
 if not PINECONE_API_KEY:
     logging.error("FATAL: PINECONE_API_KEY not found in environment or .env.")
