@@ -30,10 +30,9 @@ User Query ({query_language.upper()}): "{raw_query.strip()}"
 Respond with a JSON object matching this schema:
 {{
   "Decision": string ("Covered","Not Covered","Partial Coverage"),
-  "Reasoning": string,
-  "NextSteps": string,
+  
   "PayoutAmount": integer,
-  "Confidence": float (0.0-1.0),
+
   "Justifications": [
     {{"source": string, "text": string, "relevance": float}}
   ]

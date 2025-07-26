@@ -51,7 +51,7 @@ async def perform_search_async(
         index = pinecone_client.Index(index_name)
         response = index.query(
             vector=query_vec,
-            top_k=5,
+            top_k=3,
             include_metadata=True,
             namespace=namespace
         )
