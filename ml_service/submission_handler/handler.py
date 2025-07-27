@@ -5,10 +5,10 @@ import logging
 import time
 from typing import List
 
-from submission_handler.document_loader import download_file
-from submission_handler.parser import parse_and_chunk
+from submission_handler.document_loader import async_download_file
+from submission_handler.parser import parse_and_chunk_async
 from submission_handler.embedder import embed_chunks
-from submission_handler.vector_store import upsert_batches, delete_namespace
+from submission_handler.vector_store import async_upsert_batches, async_delete_namespace
 from submission_handler.answering import generate_answers
 
 async def handle_submission(
@@ -36,12 +36,12 @@ async def handle_submission(
 
     # 1) Download
     download_start = time.time()
-    save_path, filename = download_file(doc_url, temp_dir)
+    save_path, filename = await async_download_file(doc_url, temp_dir)  
     logging.info(f"[Timing] Total download step: {time.time() - download_start:.2f}s")
 
     try:
         # 2) Parse & chunk
-        chunks = parse_and_chunk(save_path)
+        chunks = await parse_and_chunk_async(save_path)
 
         # 3) Embed in batches
         embedded_chunks = await embed_chunks(chunks, batch_size=batch_size)
@@ -61,7 +61,7 @@ async def handle_submission(
 
         # 4) Upsert to Pinecone
         upsert_start = time.time()
-        upsert_batches(vectors, index_name, namespace_id, batch_size=batch_size)
+        async_upsert_batches(vectors, index_name, namespace_id, batch_size=batch_size)
         logging.info(f"[Timing] Upsert step: {time.time() - upsert_start:.2f}s")
 
         # 5) Generate answers
@@ -78,7 +78,7 @@ async def handle_submission(
     finally:
         # Cleanup namespace
         try:
-            delete_namespace(index_name, namespace_id)
+            async_delete_namespace(index_name, namespace_id)
         except Exception as cleanup_err:
             logging.warning(f"[Cleanup Warning] {cleanup_err}")
 

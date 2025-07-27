@@ -3,17 +3,17 @@
 import logging
 import time
 from typing import List, Dict, Any
-
+import asyncio
 from clients import pinecone_client
 
-def upsert_batches(
+async def async_upsert_batches(
     vectors: List[Dict[str, Any]],
     index_name: str,
     namespace: str,
     batch_size: int = 500
 ) -> None:
     """
-    Upserts vectors to Pinecone in batches, logging timing.
+    Asynchronously upserts vectors to Pinecone in batches.
 
     Args:
         vectors: List of dicts with 'id', 'values', and 'metadata'.
@@ -23,29 +23,43 @@ def upsert_batches(
     """
     index = pinecone_client.Index(index_name)
     total_start = time.time()
-    for i in range(0, len(vectors), batch_size):
-        batch = vectors[i : i + batch_size]
+
+    async def upsert_batch(batch, batch_num):
+        loop = asyncio.get_event_loop()
         start = time.time()
-        index.upsert(vectors=batch, namespace=namespace)
+        await loop.run_in_executor(None, index.upsert, batch, namespace)
         elapsed = time.time() - start
-        logging.info(f"[Timing] Upserted batch {i//batch_size + 1} of {len(batch)} vectors in {elapsed:.2f}s")
-    total_elapsed = time.time() - total_start
-    logging.info(f"[Timing] Completed upsert of {len(vectors)} vectors in {total_elapsed:.2f}s")
+        logging.info(f"[Timing] Upserted batch {batch_num} of {len(batch)} vectors in {elapsed:.2f}s")
 
+    tasks = []
+    for i in range(0, len(vectors), batch_size):
+        batch = vectors[i: i + batch_size]
+        tasks.append(upsert_batch(batch, i // batch_size + 1))
 
-def delete_namespace(
+    await asyncio.gather(*tasks)
+    logging.info(f"[Timing] Completed upsert of {len(vectors)} vectors in {time.time() - total_start:.2f}s")
+
+async def async_delete_namespace(
     index_name: str,
     namespace: str
 ) -> None:
     """
-    Deletes all vectors in a Pinecone namespace, logging timing.
+    Asynchronously deletes all vectors in a Pinecone namespace, logging timing.
 
     Args:
         index_name: Name of the Pinecone index.
         namespace: Namespace to delete.
     """
+    loop = asyncio.get_event_loop()
     index = pinecone_client.Index(index_name)
+
     start = time.time()
-    index.delete(delete_all=True, namespace=namespace)
+
+    def blocking_delete():
+        index.delete(delete_all=True, namespace=namespace)
+
+    await loop.run_in_executor(None, blocking_delete)
+
     elapsed = time.time() - start
     logging.info(f"[Timing] Deleted namespace '{namespace}' in {elapsed:.2f}s")
+

@@ -69,12 +69,15 @@ async def generate_answer_async(
                 client.chat.completions.create(
                     model=OPENAI_CHAT_MODEL,
                     messages=[{"role": "user", "content": prompt}],
+                    stream=True
                 ),
                 timeout=timeout
             )
             content = response.choices[0].message.content
             logging.info("LLM response received. Validating JSON...")
             return FinalAnswer.model_validate_json(content)
+
+            
         except APIError as api_err:
             logging.error(f"OpenAI API error (attempt {attempt}): {api_err}")
             last_exception = api_err

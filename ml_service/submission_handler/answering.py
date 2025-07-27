@@ -5,8 +5,9 @@ import time
 import asyncio
 from typing import List, Union
 
-import search
+from search import search_runner as search
 from answer import answer_generator
+
 from query_parser.main_parser import get_structured_query
 from clients import pinecone_client, openai_async_client
 

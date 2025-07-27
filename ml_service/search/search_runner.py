@@ -8,7 +8,7 @@ from clients import openai_async_client,pinecone_client,openai_client
 from search.translator import translate_to_english_async
 from search.embedding import _async_embed_query
 from search.pinecone_query import _async_pinecone_query
-from search.pinecone_query import _sync_pinecone_query
+# from search.pinecone_query import _sync_pinecone_query
 from search.re_ranker import _rerank_results
 from search.embedding import _sync_embed_query
 from search.translator import translate_to_english_sync
@@ -40,13 +40,16 @@ async def perform_search_async(
     if isinstance(vec, dict) and "error" in vec:
         return [vec]
 
-    results = _async_pinecone_query(vec, pinecone_client, index_name, namespace, top_k)
+    results = await _async_pinecone_query(vec, index_name, namespace, top_k)
+
     if structured_query and isinstance(results, list) and results and "error" not in results[0]:
         results = _rerank_results(results, structured_query)
 
     return results
 
 
+
+# this is the sync method currently unused can be used if we use any cli
 
 def perform_search(
     raw_query: str,

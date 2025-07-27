@@ -1,11 +1,13 @@
 import logging
+import asyncio
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import fitz  # PyMuPDF
 import docx
 from langdetect import detect
 from clients import client
-
+from concurrent.futures import ThreadPoolExecutor
+executor = ThreadPoolExecutor(max_workers=4)
 
 # --- Document Ingestion ---
 def ingest_documents(specific_file: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -42,3 +44,8 @@ def ingest_documents(specific_file: Optional[str] = None) -> List[Dict[str, Any]
     
     logging.info(f"Ingested {len(documents)} document(s)")
     return documents
+
+
+async def ingest_documents_async(specific_file: Optional[str] = None) -> List[Dict[str, Any]]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, ingest_documents, specific_file)

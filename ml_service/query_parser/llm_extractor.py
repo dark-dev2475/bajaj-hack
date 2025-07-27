@@ -1,24 +1,22 @@
 # ml_service/query_parser/llm_extractor.py
-"""
-Uses an LLM to extract complex, ambiguous information from a query.
-"""
+
 import os
 import json
 import logging
-from openai import OpenAI, APIError
+from openai import AsyncOpenAI, APIError
 from typing import Dict, Any
 from config import OPENAI_CHAT_MODEL
 
-# Initialize the OpenAI client
+# Initialize the async OpenAI client
 try:
-    openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    openai_client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 except TypeError:
     logging.error("OPENAI_API_KEY not found. Please set the environment variable.")
     openai_client = None
 
-def extract_with_llm(query: str) -> Dict[str, Any]:
+async def extract_with_llm_async(query: str) -> Dict[str, Any]:
     """
-    Sends the (potentially simplified) query to an LLM for structured extraction.
+    Asynchronously sends the query to an LLM for structured extraction.
 
     Args:
         query: The user query string.
@@ -66,9 +64,9 @@ Given a user's natural language query, extract and return structured information
 }
 """
 
-    
+
     try:
-        response = openai_client.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model=OPENAI_CHAT_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -78,6 +76,7 @@ Given a user's natural language query, extract and return structured information
         )
         extracted_json = response.choices[0].message.content
         return json.loads(extracted_json)
+
     except APIError as e:
         logging.error(f"OpenAI API error during extraction: {e}")
         return {}

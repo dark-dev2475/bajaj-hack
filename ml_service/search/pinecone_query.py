@@ -4,23 +4,6 @@ import asyncio
 from clients import pinecone_client
 
 
-def _sync_pinecone_query(vec: Any, index_name: str, namespace: Optional[str], top_k: int) -> Any:
-    """
-    Synchronously query Pinecone with the given vector.
-    Returns a list of matches or an error dict.
-    """
-    try:
-        index = pinecone_client.Index(index_name)
-        resp = index.query(
-            vector=vec,
-            top_k=top_k,
-            include_metadata=True,
-            namespace=namespace
-        )
-        return resp.get("matches", [])
-    except Exception as e:
-        logging.error(f"Pinecone query failed: {e}")
-        return [{"error": f"Pinecone query failed: {e}"}]
 
 async def _async_pinecone_query(
     vec: Any,
@@ -48,3 +31,26 @@ async def _async_pinecone_query(
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, blocking_query)
+
+
+
+
+
+def _sync_pinecone_query(vec: Any, index_name: str, namespace: Optional[str], top_k: int) -> Any:
+    """
+    Synchronously query Pinecone with the given vector.
+    Returns a list of matches or an error dict.
+    """
+    try:
+        index = pinecone_client.Index(index_name)
+        resp = index.query(
+            vector=vec,
+            top_k=top_k,
+            include_metadata=True,
+            namespace=namespace
+        )
+        return resp.get("matches", [])
+    except Exception as e:
+        logging.error(f"Pinecone query failed: {e}")
+        return [{"error": f"Pinecone query failed: {e}"}]
+

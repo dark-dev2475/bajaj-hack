@@ -1,26 +1,35 @@
-import logging
+from concurrent.futures import ThreadPoolExecutor
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from clients import client
-# --- Chunking ---
-def chunk_documents(documents: list, chunk_size: int = 800, overlap: int = 100) -> list:
+import logging
+
+
+def _chunk_single_document(doc, chunk_size, overlap):
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=overlap,
         length_function=len
     )
+    chunks = splitter.split_text(doc["raw_text"])
 
+    return [
+        {
+            "metadata": {
+                "source_file": doc["source_file"],
+                "language": doc["language"],
+                "chunk_number": i + 1
+            },
+            "chunk_text": chunk
+        }
+        for i, chunk in enumerate(chunks)
+    ]
+
+
+def chunk_documents_parallel(documents: list, chunk_size: int = 800, overlap: int = 100) -> list:
     all_chunks = []
-    for doc in documents:
-        chunks = splitter.split_text(doc["raw_text"])
-        for i, chunk_text in enumerate(chunks):
-            all_chunks.append({
-                "metadata": {
-                    "source_file": doc["source_file"],
-                    "language": doc["language"],
-                    "chunk_number": i + 1
-                },
-                "chunk_text": chunk_text
-            })
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(_chunk_single_document, doc, chunk_size, overlap) for doc in documents]
+        for future in futures:
+            all_chunks.extend(future.result())
 
     logging.info(f"Total chunks created: {len(all_chunks)}")
     return all_chunks
