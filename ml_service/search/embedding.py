@@ -1,5 +1,6 @@
 import logging
 from clients import openai_async_client,openai_client
+from typing import Any
 
 async def _async_embed_query(query: str, openai_client: openai_async_client) -> Any:
     """

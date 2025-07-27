@@ -6,7 +6,7 @@ import time
 from typing import List
 
 from submission_handler.document_loader import async_download_file
-from submission_handler.parser import parse_and_chunk_async
+from submission_handler.parser import parse_and_chunk
 from submission_handler.embedder import embed_chunks
 from submission_handler.vector_store import async_upsert_batches, async_delete_namespace
 from submission_handler.answering import generate_answers
@@ -41,7 +41,7 @@ async def handle_submission(
 
     try:
         # 2) Parse & chunk
-        chunks = await parse_and_chunk_async(save_path)
+        chunks = await parse_and_chunk(save_path)
 
         # 3) Embed in batches
         embedded_chunks = await embed_chunks(chunks, batch_size=batch_size)
@@ -78,7 +78,7 @@ async def handle_submission(
     finally:
         # Cleanup namespace
         try:
-            async_delete_namespace(index_name, namespace_id)
+             await async_delete_namespace(index_name, namespace_id)
         except Exception as cleanup_err:
             logging.warning(f"[Cleanup Warning] {cleanup_err}")
 

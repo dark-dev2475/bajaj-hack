@@ -5,7 +5,7 @@ from pathlib import Path
 import fitz  # PyMuPDF
 import docx
 from langdetect import detect
-from clients import client
+
 from concurrent.futures import ThreadPoolExecutor
 executor = ThreadPoolExecutor(max_workers=4)
 

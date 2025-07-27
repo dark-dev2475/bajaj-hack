@@ -10,8 +10,8 @@ from search.embedding import _async_embed_query
 from search.pinecone_query import _async_pinecone_query
 # from search.pinecone_query import _sync_pinecone_query
 from search.re_ranker import _rerank_results
-from search.embedding import _sync_embed_query
-from search.translator import translate_to_english_sync
+
+
 
 from query_parser.schema import PolicyQuery
 

@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from clients import async_client
+from clients import openai_async_client
 
 
 # --- Embedding: Async ---
@@ -16,7 +16,7 @@ async def generate_embeddings_async(chunks_with_metadata: list) -> list:
         texts = [chunk["chunk_text"] for chunk in batch]
         for _ in range(3):  # Retry up to 3 times
             try:
-                response = await async_client.embeddings.create(
+                response = await openai_async_client.embeddings.create(
                     input=texts,
                     model="text-embedding-3-small"
                 )
