@@ -4,7 +4,6 @@ import logging
 import time
 import asyncio
 from typing import List, Union
-
 from search import search_runner as search
 from answer import answer_generator
 
@@ -24,7 +23,7 @@ async def generate_answers(
     async def _answer(q: str) -> str:
         start = time.time()
         try:
-            structured_query = get_structured_query(q)
+            structured_query = await get_structured_query(q)
 
             hits = await search.perform_search_async(
                 raw_query=q,

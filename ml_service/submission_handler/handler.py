@@ -61,7 +61,7 @@ async def handle_submission(
 
         # 4) Upsert to Pinecone
         upsert_start = time.time()
-        async_upsert_batches(vectors, index_name, namespace_id, batch_size=batch_size)
+        await async_upsert_batches(vectors, index_name, namespace_id, batch_size=batch_size)
         logging.info(f"[Timing] Upsert step: {time.time() - upsert_start:.2f}s")
 
         # 5) Generate answers

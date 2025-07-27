@@ -16,18 +16,21 @@ async def _async_pinecone_query(
     This runs the synchronous Pinecone query in a thread pool.
     """
     def blocking_query():
-        try:
-            index = pinecone_client.Index(index_name)
-            response = index.query(
-                vector=vec,
-                top_k=top_k,
-                include_metadata=True,
-                namespace=namespace
-            )
-            return response.get("matches", [])
-        except Exception as e:
-            logging.error(f"[Async] Pinecone query failed: {e}")
-            return [{"error": f"Pinecone query failed: {e}"}]
+     try:
+        logging.info(f"Querying Pinecone with: top_k={top_k}, namespace={namespace}")
+        index = pinecone_client.Index(index_name)
+        response = index.query(
+            vector=vec,
+            top_k=top_k,
+            include_metadata=True,
+            namespace=namespace
+        )
+        logging.info(f"Pinecone async response: {response}")
+        return response.get("matches", [])
+     except Exception as e:
+        logging.error(f"[Async] Pinecone query failed: {e}")
+        return [{"error": f"Pinecone query failed: {e}"}]
+
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, blocking_query)
