@@ -12,7 +12,7 @@ from submission_handler.handler import handle_submission as submission_handler
 from document_parser.document_ingestion import ingest_documents
 from document_parser.document_chunks import chunk_documents
 from document_parser.document_genembedd import generate_embeddings
-import search
+from search import search_runner as search
 
 # Configuration
 UPLOAD_FOLDER = 'temp_docs'

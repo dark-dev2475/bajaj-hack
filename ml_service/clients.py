@@ -16,8 +16,7 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV      = os.getenv("PINECONE_ENVIRONMENT")  # e.g. "aws-us-west-2"
 OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY")
-async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 # Validate presence
 if not PINECONE_API_KEY:
     logging.error("FATAL: PINECONE_API_KEY not found in environment or .env.")
@@ -41,6 +40,7 @@ except Exception as e:
 # Initialize Async OpenAI client once
 try:
     logging.info("Initializing OpenAI async client...")
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     openai_async_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
     logging.info("OpenAI async client initialized successfully.")
 except Exception as e:
