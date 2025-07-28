@@ -32,8 +32,7 @@ async def _async_pinecone_query(
         return [{"error": f"Pinecone query failed: {e}"}]
 
 
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, blocking_query)
+    return await asyncio.to_thread(blocking_query)
 
 
 

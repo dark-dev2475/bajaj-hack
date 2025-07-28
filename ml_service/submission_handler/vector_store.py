@@ -13,7 +13,7 @@ async def async_upsert_batches(
     batch_size: int = 500
 ) -> None:
     """
-    Asynchronously upserts vectors to Pinecone in batches.
+    Asynchronously and concurrently upserts vectors to Pinecone in batches.
 
     Args:
         vectors: List of dicts with 'id', 'values', and 'metadata'.
@@ -23,43 +23,50 @@ async def async_upsert_batches(
     """
     index = pinecone_client.Index(index_name)
     total_start = time.time()
+    logging.info(f"Starting upsert of {len(vectors)} vectors to namespace '{namespace}'...")
 
-    async def upsert_batch(batch, batch_num):
-        loop = asyncio.get_event_loop()
-        start = time.time()
-        await loop.run_in_executor(None, index.upsert, batch, namespace)
-        elapsed = time.time() - start
-        logging.info(f"[Timing] Upserted batch {batch_num} of {len(batch)} vectors in {elapsed:.2f}s")
-
+    # Create tasks for each batch using the modern asyncio.to_thread
     tasks = []
     for i in range(0, len(vectors), batch_size):
         batch = vectors[i: i + batch_size]
-        tasks.append(upsert_batch(batch, i // batch_size + 1))
+        task = asyncio.to_thread(index.upsert, vectors=batch, namespace=namespace)
+        tasks.append(task)
+    
+    # Use return_exceptions=True to prevent one failure from stopping all others
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    await asyncio.gather(*tasks)
-    logging.info(f"[Timing] Completed upsert of {len(vectors)} vectors in {time.time() - total_start:.2f}s")
+    # Check results for any exceptions that occurred
+    success_count = 0
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logging.error(f"Batch {i+1} failed to upsert: {result}")
+        else:
+            success_count += 1
+    
+    logging.info(
+        f"Upsert complete for namespace '{namespace}': "
+        f"{success_count}/{len(tasks)} batches succeeded in {time.time() - total_start:.2f}s"
+    )
 
 async def async_delete_namespace(
     index_name: str,
     namespace: str
 ) -> None:
     """
-    Asynchronously deletes all vectors in a Pinecone namespace, logging timing.
+    Asynchronously deletes all vectors in a Pinecone namespace.
 
     Args:
         index_name: Name of the Pinecone index.
         namespace: Namespace to delete.
     """
-    loop = asyncio.get_event_loop()
     index = pinecone_client.Index(index_name)
-
     start = time.time()
+    logging.info(f"Attempting to delete namespace '{namespace}'...")
 
-    def blocking_delete():
-        index.delete(delete_all=True, namespace=namespace)
-
-    await loop.run_in_executor(None, blocking_delete)
-
-    elapsed = time.time() - start
-    logging.info(f"[Timing] Deleted namespace '{namespace}' in {elapsed:.2f}s")
-
+    try:
+        # Simply use asyncio.to_thread directly on the method
+        await asyncio.to_thread(index.delete, delete_all=True, namespace=namespace)
+        elapsed = time.time() - start
+        logging.info(f"Successfully deleted namespace '{namespace}' in {elapsed:.2f}s")
+    except Exception as e:
+        logging.error(f"Failed to delete namespace '{namespace}': {e}")

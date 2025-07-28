@@ -1,9 +1,7 @@
-# ml_service/submission_handler/answering.py
-
 import logging
 import time
 import asyncio
-from typing import List, Union
+from typing import List
 from search import search_runner as search
 from answer import answer_generator
 
@@ -16,8 +14,8 @@ async def generate_answers(
     index_name: str
 ) -> List[str]:
     """
-    Performs semantic search and LLM answer generation in parallel,
-    protecting each task so failures don’t cancel the group.
+    Performs semantic search and LLM answer generation in parallel.
+    Each task is self-contained and handles its own errors.
     """
 
     async def _answer(q: str) -> str:
@@ -52,19 +50,10 @@ async def generate_answers(
             logging.error(f"[Answer Error] '{q}': {e}")
             return "Error processing this question."
 
-    # Create tasks
+    # Create and run tasks concurrently. Since each task handles its own
+    # exceptions and is guaranteed to return a string, we don't need
+    # to re-check for exceptions after gathering.
     tasks = [asyncio.create_task(_answer(q)) for q in questions]
-
-    # Gather with return_exceptions=True so no task cancels others
-    raw_results: List[Union[str, Exception]] = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Normalize results: turn any Exception into an error message
-    results: List[str] = []
-    for idx, res in enumerate(raw_results):
-        if isinstance(res, Exception):
-            logging.error(f"[Answering] Task for question {idx} raised: {res}")
-            results.append("Error processing this question.")
-        else:
-            results.append(res)
+    results: List[str] = await asyncio.gather(*tasks)
 
     return results

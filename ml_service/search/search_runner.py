@@ -1,6 +1,6 @@
 import logging 
 from typing import List, Dict, Any, Optional
-
+import asyncio
 
 from clients import openai_async_client,pinecone_client,openai_client 
 
@@ -43,8 +43,9 @@ async def perform_search_async(
     results = await _async_pinecone_query(vec, index_name, namespace, top_k)
 
     if structured_query and isinstance(results, list) and results and "error" not in results[0]:
-        results = _rerank_results(results, structured_query)
-
+        results = await asyncio.to_thread(
+            _rerank_results, results, structured_query
+        )
     return results
 
 
