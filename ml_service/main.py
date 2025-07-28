@@ -32,7 +32,7 @@ app.add_middleware(
 
 # Request schema for /hackrx/run
 class RAGRequest(BaseModel):
-    document_url: str
+    documents: str
     questions: List[str]
 
 # --- Endpoint 1: Run RAG ---
@@ -41,7 +41,7 @@ async def run_rag(data: RAGRequest):
     if not data.questions or not isinstance(data.questions, list):
         raise HTTPException(status_code=400, detail="'questions' must be a non-empty list of strings.")
 
-    logging.info(f"Received RAG request for doc: {data.document_url} with {len(data.questions)} questions.")
+    logging.info(f"Received RAG request for docs: {data.documents} with {len(data.questions)} questions.")
 
     try:
         # --- LOG 1: Log the inputs to the handler ---
