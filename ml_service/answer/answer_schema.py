@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List
-
+from typing import Optional
 class Justification(BaseModel):
     source: str
     text: str
@@ -13,6 +13,6 @@ class FinalAnswer(BaseModel):
     Decision: str = Field(..., description="The final decision, e.g., 'Covered', 'Not Covered', 'Partial Coverage'.")
     Reasoning: str = Field(..., description="A step-by-step explanation of how the decision was reached.")
     # NextSteps: str = Field(..., description="Actionable next steps for the user.")
-    PayoutAmount: int = Field(..., description="The estimated payout amount. Can be 0 if not covered.")
+    PayoutAmount: Optional[int] = None
     Confidence: float = Field(..., ge=0.0, le=1.0, description="The confidence score (0-1) of the decision.")
     Justifications: List[Justification] = Field(..., description="An array of clauses supporting the decision.")
