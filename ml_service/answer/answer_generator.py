@@ -3,95 +3,86 @@
 import os
 import logging
 from typing import Optional, List, Dict, Any
-
-from openai import APIError
-from config import OPENAI_CHAT_MODEL
-from answer.answer_schema import FinalAnswer
-from clients import openai_async_client
 import asyncio
 
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from .answer_schema import FinalAnswer, Justification # Assuming schema is in this file
 
-def _create_prompt(raw_query: str, search_results: List[Dict[str, Any]], query_language: str) -> str:
-    """
-    Builds a structured prompt for the LLM with source-aware policy clause context.
-    """
-    context_blocks = [
-        f'Source {i + 1} (from file: {res["metadata"].get("source", "unknown")}):\n"{res["metadata"].get("text", "").strip()}"'
-        for i, res in enumerate(search_results)
-    ]
-    context = "\n\n".join(context_blocks)
+# --- 1. Initialize the Chat Model for Answer Generation ---
+# We create a specific LLM chain for this task.
+# Using a higher temperature (e.g., 0.2) can allow for more natural-sounding text.
+llm = ChatOpenAI(
+    model="gpt-4-turbo", # Using a more powerful model for the final answer is often a good idea
+    temperature=0.2
+)
 
-    return f"""You are an empathetic insurance claims assistant. Analyze the user's query and provided policy clauses to produce a structured JSON response.
+# --- 2. Create the Answer Generation Chain ---
+# This chain will take the context and question, and force the LLM
+# to output a response that perfectly matches your FinalAnswer schema.
+structured_llm = llm.with_structured_output(FinalAnswer)
+
+# --- 3. Define the System and Human Prompts ---
+# This template is cleaner and more maintainable than a large f-string.
+prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are an empathetic and highly accurate insurance claims assistant.
+Your task is to analyze the provided policy clauses and the user's query to produce a structured JSON response.
+
+- Base your decision exclusively on the provided policy clauses.
+- Provide clear, step-by-step reasoning for your decision.
+- If you cannot determine a specific value (like PayoutAmount) from the text, leave it as null.
+"""),
+    ("human", """
 ---
 Policy Clauses:
 {context}
 ---
-User Query ({query_language.upper()}): "{raw_query.strip()}"
+User Query ({query_language}): "{raw_query}"
 ---
-Respond with a JSON object matching this schema:
-{{
-  "Decision": string ("Covered", "Not Covered", "Partial Coverage"),
-  "Reasoning": string,
-  
-  "PayoutAmount": integer,
-  "Confidence": float (0.0 - 1.0),
-  "Justifications": [
-    {{"source": string, "text": string, "relevance": float}}
-  ]
-}}
-Do not include any other text.""".strip()
+""")
+])
+
+# --- 4. Combine into a Final Chain ---
+answer_chain = prompt | structured_llm
+
+# --- Helper function to format the context ---
+def _format_context(search_results: List[Dict[str, Any]]) -> str:
+    """Formats the search results into a single string for the prompt."""
+    if not search_results:
+        return "No relevant policy clauses were found."
+        
+    context_blocks = [
+        f'Source File: {res.get("metadata", {}).get("source", "unknown")}\nContent: "{res.get("chunk_text", "").strip()}"'
+        for res in search_results
+    ]
+    return "\n\n---\n\n".join(context_blocks)
 
 
+# --- 5. The Main Answer Generation Function ---
 async def generate_answer_async(
     raw_query: str,
     search_results: List[Dict[str, Any]],
     query_language: str,
-    openai_client: Optional[Any] = None,
-    max_retries: int = 3,
-    timeout: int = 30
 ) -> Optional[FinalAnswer]:
     """
-    Calls the LLM asynchronously to generate a JSON-formatted answer.
-    Retries on transient errors and logs raw LLM output on JSON decode errors.
+    Generates a structured answer using a LangChain chain.
     """
-    client = openai_client or openai_async_client
-    if client is None:
-        logging.error("OpenAI client is not initialized.")
+    logging.info(f"Generating final answer for query: '{raw_query}'")
+
+    # Format the retrieved documents into a single context string.
+    context = _format_context(search_results)
+
+    try:
+        # Invoke the chain. LangChain handles the API call, JSON parsing,
+        # validation, and has built-in retry logic.
+        final_answer = await answer_chain.ainvoke({
+            "context": context,
+            "raw_query": raw_query,
+            "query_language": query_language.upper()
+        })
+        return final_answer
+        
+    except Exception as e:
+        logging.exception(f"A critical error occurred during answer generation: {e}")
         return None
 
-    prompt = _create_prompt(raw_query, search_results, query_language)
-    logging.info("Prompt constructed. Sending to LLM...")
-
-    last_exception = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=OPENAI_CHAT_MODEL,
-                    messages=[{"role": "user", "content": prompt}]
-                   
-                ),
-                timeout=timeout
-            )
-            content = response.choices[0].message.content
-            logging.info("LLM response received. Validating JSON...")
-            return FinalAnswer.model_validate_json(content)
-
-
-        except APIError as api_err:
-            logging.error(f"OpenAI API error (attempt {attempt}): {api_err}")
-            last_exception = api_err
-        except asyncio.TimeoutError:
-            logging.error(f"OpenAI LLM call timed out after {timeout} seconds (attempt {attempt})")
-            last_exception = "Timeout"
-        except Exception as e:
-            # Log the raw LLM output if available
-            if 'content' in locals():
-                logging.error(f"Failed to decode/validate LLM output (attempt {attempt}): {e}\nRaw output: {content}")
-            else:
-                logging.exception(f"Unexpected error during LLM generation (attempt {attempt})")
-            last_exception = e
-        await asyncio.sleep(2 * attempt)  # Exponential backoff
-
-    logging.error(f"All attempts to generate answer failed. Last error: {last_exception}")
-    return None

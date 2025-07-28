@@ -4,15 +4,20 @@ from typing import List, Dict, Any
 from openai import APIError, RateLimitError, APITimeoutError
 from clients import openai_async_client
 
-EMBED_BATCH_SIZE = 100 # <-- Reduced batch size
+# A smaller, safer batch size to avoid exceeding the API's token limit.
+EMBED_BATCH_SIZE = 100
 
 async def generate_embeddings_async(chunks_with_metadata: list) -> list:
     """
     Generates embeddings for chunks asynchronously, batching requests for efficiency and reliability.
     """
+    if not chunks_with_metadata:
+        return []
+        
     logging.info(f"Generating embeddings for {len(chunks_with_metadata)} chunks...")
 
     async def embed_batch(batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Processes a single batch with a smart retry mechanism."""
         texts = [chunk["chunk_text"] for chunk in batch]
         
         for attempt in range(1, 4):  # Retry up to 3 times
@@ -26,27 +31,29 @@ async def generate_embeddings_async(chunks_with_metadata: list) -> list:
                     chunk["embedding"] = response.data[i].embedding
                 return batch # Success
             
-            # Only retry on specific, transient errors
+            # Only retry on specific, transient network/API errors
             except (RateLimitError, APITimeoutError) as e:
                 logging.warning(f"Embedding failed on attempt {attempt}, retrying... Error: {e}")
                 await asyncio.sleep(2 * attempt) # Exponential backoff
             
-            # Do not retry on other errors (like invalid request due to token limit)
+            # Fail immediately on non-retryable errors (e.g., batch too large)
             except APIError as e:
-                 logging.error(f"Non-retryable OpenAI API error: {e}")
-                 # Option 1: Re-raise the exception to stop the process
-                 raise e 
-                 # Option 2 (if you want to continue but be aware): return [] and handle it later
-
-        # If all retries fail, raise an error instead of failing silently
-        raise ConnectionError("Failed to embed batch after multiple retries.")
+                 logging.error(f"Non-retryable OpenAI API error for a batch: {e}")
+                 # Re-raising the error stops the process, preventing silent data loss.
+                 raise e
 
     # Create tasks for each batch
     batches = [chunks_with_metadata[i:i+EMBED_BATCH_SIZE] for i in range(0, len(chunks_with_metadata), EMBED_BATCH_SIZE)]
     tasks = [embed_batch(batch) for batch in batches]
     
-    # Gather results
-    results = await asyncio.gather(*tasks)
-    
-    # Flatten the list of lists
-    return [chunk for batch in results for chunk in batch]
+    try:
+        # Gather results from all concurrent tasks
+        results = await asyncio.gather(*tasks)
+        
+        # Flatten the list of lists into a single list of chunks
+        return [chunk for batch in results for chunk in batch]
+    except Exception as e:
+        logging.exception("A critical error occurred during the parallel embedding process.")
+        # Depending on desired behavior, you could return an empty list or re-raise
+        return []
+

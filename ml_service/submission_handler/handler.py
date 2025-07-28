@@ -1,22 +1,76 @@
+# ml_service/submission_handler/handler.py
+
 import os
 import logging
 import time
-from typing import List
+import asyncio
+from typing import List, Dict, Any
 
-from submission_handler.document_loader import async_download_file
-from submission_handler.parser import parse_and_chunk
-from submission_handler.embedder import embed_chunks
-from submission_handler.vector_store import async_upsert_batches, async_delete_namespace
-from submission_handler.answering import generate_answers
+# Import the new, improved, and parallel versions of our functions
+from .document_loader import async_download_file
+from .parser import parse_and_chunk_async # Using the async, non-blocking version
+from .embedder import embed_chunks_parallel # Using the parallel version
+from .vector_store import async_upsert_batches, async_delete_namespace
+from .answering import generate_answers_in_parallel # This is our final, parallel answering function
+
+async def _ingest_document(
+    file_path: str,
+    filename: str,
+    namespace_id: str,
+    index_name: str
+) -> bool:
+    """
+    A helper function to encapsulate the document ingestion process.
+    1. Parse & Chunk
+    2. Embed Chunks
+    3. Prepare Vectors
+    4. Upsert to Vector Store
+    """
+    logging.info(f"[{namespace_id}] Starting ingestion for '{filename}'...")
+    
+    # 1) Parse & chunk using our improved async parser
+    chunks = await parse_and_chunk_async(file_path)
+    if not chunks:
+        logging.error(f"[{namespace_id}] No chunks were created from the document. Aborting.")
+        return False
+
+    # 2) Embed chunks in parallel
+    embedded_chunks = await embed_chunks_parallel(chunks)
+    if not embedded_chunks:
+        logging.error(f"[{namespace_id}] Failed to generate embeddings for chunks. Aborting.")
+        return False
+
+    # 3) Prepare vector dictionaries for Pinecone
+    vectors = [
+        {
+            "id": f"{namespace_id}-chunk-{i}",
+            "values": chunk["embedding"],
+            "metadata": {
+                "text": chunk["chunk_text"],
+                "source": filename
+            }
+        }
+        for i, chunk in enumerate(embedded_chunks)
+    ]
+    logging.info(f"[{namespace_id}] Prepared {len(vectors)} vectors for upsert.")
+
+    # 4) Upsert to Pinecone using our robust, parallel upsert function
+    await async_upsert_batches(vectors, index_name, namespace_id)
+    
+    # Give the vector database a moment to index the new data
+    logging.info(f"[{namespace_id}] Waiting for indexing to complete...")
+    await asyncio.sleep(5)
+    
+    return True
+
 
 async def handle_submission(
     doc_url: str,
     questions: List[str],
     temp_dir: str,
     index_name: str,
-    namespace_prefix: str = "rag",
-    batch_size: int = 500
-) -> List[str]:
+    namespace_prefix: str = "rag"
+) -> List[Dict[str, Any]]:
     """
     High-level orchestration of the RAG pipeline.
     """
@@ -26,49 +80,29 @@ async def handle_submission(
 
     save_path, filename = await async_download_file(doc_url, temp_dir)
     if not save_path:
-        # Handle download failure
-        return ["Failed to download document."] * len(questions)
+        return [{"error": "Failed to download document."}] * len(questions)
 
     try:
-        # 1) Parse & chunk
-        chunks = await parse_and_chunk(save_path)
-        logging.info(f"[{namespace_id}] Created {len(chunks)} chunks from document '{filename}'.")
-        if not chunks:
-            # Handle case where no text could be extracted
-            return ["Could not parse any text from the document."] * len(questions)
+        # --- Step 1: Ingest the document ---
+        ingestion_success = await _ingest_document(save_path, filename, namespace_id, index_name)
+        if not ingestion_success:
+            return [{"error": "Failed to process and ingest document."}] * len(questions)
 
-        # 2) Embed in batches
-        embedded_chunks = await embed_chunks(chunks, batch_size=batch_size)
-        logging.info(f"[{namespace_id}] Generated {len(embedded_chunks)} embeddings.")
-
-        # Prepare vector dicts
-        vectors = [
-            {
-                "id": f"{namespace_id}-chunk-{i}",
-                "values": chunk["embedding"],
-                "metadata": {
-                    "text": chunk["chunk_text"],
-                    "source": filename
-                }
-            }
-            for i, chunk in enumerate(embedded_chunks)
-        ]
-        logging.info(f"[{namespace_id}] Prepared {len(vectors)} vectors for upsert.")
-
-        # 3) Upsert to Pinecone
-        await async_upsert_batches(vectors, index_name, namespace_id, batch_size=batch_size)
-
-        # 4) Generate answers
-        answers = await generate_answers(questions, namespace_id, index_name)
-        return answers
+        # --- Step 2: Generate answers in parallel ---
+        # This now calls our final, improved answering function.
+        answers = await generate_answers_in_parallel(questions, namespace_id, index_name)
+        
+        # --- Step 3: Convert results to JSON-serializable format ---
+        # The pipeline now returns structured objects. We convert them to dicts for the API.
+        results = [ans.model_dump() if ans else {"error": "Failed to generate answer."} for ans in answers]
+        return results
 
     except Exception as e:
-        # CRITICAL: Use logging.exception to get the full stack trace in your logs
-        logging.exception(f"[{namespace_id}] A critical error occurred in the RAG pipeline.")
-        return [f"Pipeline failed due to an internal error."] * len(questions)
+        logging.exception(f"[{namespace_id}] A critical unhandled error occurred in the main pipeline.")
+        return [{"error": "A critical internal error occurred."}] * len(questions)
 
     finally:
-        # Cleanup
+        # --- Step 4: Cleanup ---
         logging.info(f"[{namespace_id}] Starting cleanup process.")
         try:
             await async_delete_namespace(index_name, namespace_id)
