@@ -2,7 +2,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import asyncio
 
-from clients import openai_async_client,pinecone_client,openai_client 
+from clients import openai_async_client,pinecone_client
 
 
 from search.translator import translate_to_english_async

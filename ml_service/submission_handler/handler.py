@@ -1,5 +1,3 @@
-# ml_service/submission_handler/handler.py
-
 import os
 import logging
 import time
@@ -20,31 +18,28 @@ async def handle_submission(
     batch_size: int = 500
 ) -> List[str]:
     """
-    High‑level orchestration of the RAG pipeline:
-      1) Download
-      2) Parse + Chunk
-      3) Embed + Upsert
-      4) Answer Generation
-      5) Cleanup
-
-    Returns:
-        List of answers corresponding to the input questions.
+    High-level orchestration of the RAG pipeline.
     """
     start_total = time.time()
-    # Use timestamp instead of uuid for namespace
     namespace_id = f"{namespace_prefix}-{int(start_total)}"
+    logging.info(f"Starting new RAG pipeline with namespace_id: {namespace_id}")
 
-    # 1) Download
-    download_start = time.time()
-    save_path, filename = await async_download_file(doc_url, temp_dir)  
-    logging.info(f"[Timing] Total download step: {time.time() - download_start:.2f}s")
+    save_path, filename = await async_download_file(doc_url, temp_dir)
+    if not save_path:
+        # Handle download failure
+        return ["Failed to download document."] * len(questions)
 
     try:
-        # 2) Parse & chunk
+        # 1) Parse & chunk
         chunks = await parse_and_chunk(save_path)
+        logging.info(f"[{namespace_id}] Created {len(chunks)} chunks from document '{filename}'.")
+        if not chunks:
+            # Handle case where no text could be extracted
+            return ["Could not parse any text from the document."] * len(questions)
 
-        # 3) Embed in batches
+        # 2) Embed in batches
         embedded_chunks = await embed_chunks(chunks, batch_size=batch_size)
+        logging.info(f"[{namespace_id}] Generated {len(embedded_chunks)} embeddings.")
 
         # Prepare vector dicts
         vectors = [
@@ -58,32 +53,31 @@ async def handle_submission(
             }
             for i, chunk in enumerate(embedded_chunks)
         ]
+        logging.info(f"[{namespace_id}] Prepared {len(vectors)} vectors for upsert.")
 
-        # 4) Upsert to Pinecone
-        upsert_start = time.time()
+        # 3) Upsert to Pinecone
         await async_upsert_batches(vectors, index_name, namespace_id, batch_size=batch_size)
-        logging.info(f"[Timing] Upsert step: {time.time() - upsert_start:.2f}s")
 
-        # 5) Generate answers
-        answers_start = time.time()
+        # 4) Generate answers
         answers = await generate_answers(questions, namespace_id, index_name)
-        logging.info(f"[Timing] Answer generation step: {time.time() - answers_start:.2f}s")
         return answers
 
     except Exception as e:
-        logging.error(f"[Pipeline Error] {e}")
-        # Return error per question
-        return [f"Pipeline failed: {e}"] * len(questions)
+        # CRITICAL: Use logging.exception to get the full stack trace in your logs
+        logging.exception(f"[{namespace_id}] A critical error occurred in the RAG pipeline.")
+        return [f"Pipeline failed due to an internal error."] * len(questions)
 
     finally:
-        # Cleanup namespace
+        # Cleanup
+        logging.info(f"[{namespace_id}] Starting cleanup process.")
         try:
-             await async_delete_namespace(index_name, namespace_id)
+            await async_delete_namespace(index_name, namespace_id)
+            logging.info(f"[{namespace_id}] Successfully deleted namespace.")
         except Exception as cleanup_err:
-            logging.warning(f"[Cleanup Warning] {cleanup_err}")
+            logging.warning(f"[{namespace_id}] Could not delete namespace during cleanup: {cleanup_err}")
 
-        # Remove downloaded file
         if os.path.exists(save_path):
             os.remove(save_path)
+            logging.info(f"[{namespace_id}] Successfully removed temporary file '{save_path}'.")
 
-        logging.info(f"[Timing] Total pipeline time: {time.time() - start_total:.2f}s")
+        logging.info(f"[{namespace_id}] Total pipeline time: {time.time() - start_total:.2f}s")

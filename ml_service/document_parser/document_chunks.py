@@ -23,13 +23,17 @@ def _chunk_single_document(doc, chunk_size, overlap):
         for i, chunk in enumerate(chunks)
     ]
 
-
 def chunk_documents_parallel(documents: list, chunk_size: int = 800, overlap: int = 100) -> list:
     all_chunks = []
     with ThreadPoolExecutor() as executor:
         futures = [executor.submit(_chunk_single_document, doc, chunk_size, overlap) for doc in documents]
         for future in futures:
-            all_chunks.extend(future.result())
+            try:
+                # Safely get the result from each future
+                all_chunks.extend(future.result())
+            except Exception as e:
+                # Log the error and continue with the other documents
+                logging.error(f"Failed to chunk a document: {e}")
 
     logging.info(f"Total chunks created: {len(all_chunks)}")
     return all_chunks

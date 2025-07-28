@@ -10,8 +10,6 @@ import uvicorn
 
 from submission_handler.handler import handle_submission as submission_handler
 
-# from search import search_runner as search
-
 # Configuration
 UPLOAD_FOLDER = 'temp_docs'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -46,10 +44,18 @@ async def run_rag(data: RAGRequest):
     logging.info(f"Received RAG request for doc: {data.document_url} with {len(data.questions)} questions.")
 
     try:
-        answers = await submission_handler(data.document_url, data.questions, UPLOAD_FOLDER,INDEX_NAME)
-        return {"answers": answers}
-    except Exception as e:
-        logging.error(f"[RAG Error] {e}")
-        raise HTTPException(status_code=500, detail="An internal server error occurred.")
+        # --- LOG 1: Log the inputs to the handler ---
+        logging.info(f"Calling submission_handler with index_name: '{INDEX_NAME}' and upload_folder: '{UPLOAD_FOLDER}'")
+        
+        answers = await submission_handler(data.document_url, data.questions, UPLOAD_FOLDER, INDEX_NAME)
 
-# --- Endpoint 2: Ingest File ---
+        # --- LOG 2: Log the summary of the successful result ---
+        logging.info(f"Successfully generated {len(answers)} answers.")
+        
+        return {"answers": answers}
+    
+    except Exception as e:
+        # --- LOG 3 (CRITICAL): Log the full exception traceback ---
+        logging.exception(f"An unhandled error occurred in the RAG pipeline: {e}")
+        
+        raise HTTPException(status_code=500, detail="An internal server error occurred.")

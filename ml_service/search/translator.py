@@ -1,6 +1,6 @@
 import logging
 from langdetect import detect
-from clients import openai_client,openai_async_client
+from clients import openai_async_client
 
 
 # ASYNC translator
