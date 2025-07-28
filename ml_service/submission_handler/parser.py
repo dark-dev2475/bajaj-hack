@@ -5,7 +5,7 @@ import time
 from typing import List, Dict, Any
 import asyncio
 
-from document_parser.document_ingestion import ingest_documents_async
+from document_parser.document_ingestion import ingest_documents_parallel
 from document_parser.document_chunks import  chunk_documents_parallel
 
 async def parse_and_chunk(specific_file: str) -> List[Dict[str, Any]]:
@@ -20,7 +20,7 @@ async def parse_and_chunk(specific_file: str) -> List[Dict[str, Any]]:
     """
     # 1) Ingest
     t0 = time.time()
-    documents = await ingest_documents_async(specific_file=specific_file)
+    documents = await ingest_documents_parallel(specific_file=specific_file)
     t1 = time.time()
     logging.info(f"[Timing] Ingested {len(documents)} document(s) in {t1 - t0:.2f}s")
 
