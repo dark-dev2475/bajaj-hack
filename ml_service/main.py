@@ -47,7 +47,7 @@ async def run_rag(data: RAGRequest):
         # --- LOG 1: Log the inputs to the handler ---
         logging.info(f"Calling submission_handler with index_name: '{INDEX_NAME}' and upload_folder: '{UPLOAD_FOLDER}'")
         
-        answers = await submission_handler(data.document_url, data.questions, UPLOAD_FOLDER, INDEX_NAME)
+        answers = await submission_handler(data.documents, data.questions, UPLOAD_FOLDER, INDEX_NAME)
 
         # --- LOG 2: Log the summary of the successful result ---
         logging.info(f"Successfully generated {len(answers)} answers.")
