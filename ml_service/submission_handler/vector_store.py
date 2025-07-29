@@ -5,7 +5,8 @@ import time
 from typing import List, Dict, Any
 import asyncio
 from clients import pinecone_client
-from pinecone.core.client.exceptions import ApiException # For specific error handling
+from pinecone.exceptions import PineconeException  # or ApiException if you're using it
+
 
 async def async_upsert_batches(
     vectors: List[Dict[str, Any]],
@@ -50,7 +51,7 @@ async def async_upsert_batches(
                     logging.info(f"Successfully upserted and verified batch {batch_num} of {len(batch)} vectors.")
                     return True # Indicate success
 
-                except ApiException as e:
+                except PineconeException as e:
                     if e.status >= 500 and attempt < max_retries:
                         logging.warning(
                             f"Batch {batch_num} failed with server error (status {e.status}). "

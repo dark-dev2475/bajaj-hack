@@ -92,8 +92,11 @@ async def generate_answers(
     ]
     
     # asyncio.gather runs all tasks and collects their results.
-    results = await asyncio.gather(*tasks)
-    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for i, result in enumerate(results):
+     if isinstance(result, Exception):
+        logging.error(f"Task {i} failed: {result}")
+
     elapsed = time.time() - start_time
     logging.info(f"Finished processing all {len(questions)} questions in {elapsed:.2f}s.")
     

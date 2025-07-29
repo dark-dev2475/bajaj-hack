@@ -4,14 +4,39 @@ import os
 import logging
 import time
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Import the new, improved, and parallel versions of our functions
 from .document_loader import async_download_file
-from .parser import parse_and_chunk_async # Using the async, non-blocking version
-from .embedder import embed_chunks_parallel # Using the parallel version
+from .parser import parse_and_chunk_async
+from .embedder import embed_chunks
 from .vector_store import async_upsert_batches, async_delete_namespace
-from .answering import generate_answers_in_parallel # This is our final, parallel answering function
+from .answering import generate_answers
+# We need an extractor to get the policy type from the document
+from query_parser.llm_extractor import extract_with_llm_async
+
+async def _extract_policy_type_from_doc(text: str) -> Optional[str]:
+    """Uses an LLM to extract just the policy_type from the start of a document."""
+    # We only need the first ~1000 characters to find the policy type
+    snippet = text[:1000]
+    logging.info("Extracting policy_type from document snippet...")
+    try:
+        # We can reuse our query extractor for this task
+        extracted_data = await extract_with_llm_async(
+            f"What is the policy_type described in this document? Snippet: {snippet}"
+        )
+        if extracted_data and extracted_data.get("policy_type"):
+            policy_type = extracted_data["policy_type"]
+                        # --- THIS IS THE FIX: Normalize the extracted value ---
+            # Convert to lowercase and strip whitespace to ensure consistency.
+            normalized_policy_type = policy_type.lower().strip()
+            logging.info(f"Extracted and normalized policy_type: '{normalized_policy_type}'")
+            return normalized_policy_type
+            # --- END OF FIX ---
+    except Exception as e:
+        logging.error(f"Could not extract policy_type from document: {e}")
+    return None
+
 
 async def _ingest_document(
     file_path: str,
@@ -22,44 +47,45 @@ async def _ingest_document(
     """
     A helper function to encapsulate the document ingestion process.
     1. Parse & Chunk
-    2. Embed Chunks
-    3. Prepare Vectors
+    2. Enrich Metadata with policy_type
+    3. Embed Chunks
     4. Upsert to Vector Store
     """
     logging.info(f"[{namespace_id}] Starting ingestion for '{filename}'...")
     
-    # 1) Parse & chunk using our improved async parser
     chunks = await parse_and_chunk_async(file_path)
     if not chunks:
         logging.error(f"[{namespace_id}] No chunks were created from the document. Aborting.")
         return False
 
-    # 2) Embed chunks in parallel
-    embedded_chunks = await embed_chunks_parallel(chunks)
+    # --- METADATA ENRICHMENT ---
+    # Extract the policy type once from the first chunk
+    policy_type = await _extract_policy_type_from_doc(chunks[0]['chunk_text'])
+
+    embedded_chunks = await embed_chunks(chunks)
     if not embedded_chunks:
         logging.error(f"[{namespace_id}] Failed to generate embeddings for chunks. Aborting.")
         return False
 
-    # 3) Prepare vector dictionaries for Pinecone
     vectors = [
         {
             "id": f"{namespace_id}-chunk-{i}",
             "values": chunk["embedding"],
             "metadata": {
                 "text": chunk["chunk_text"],
-                "source": filename
+                "source": filename,
+                # Add the extracted policy_type to every chunk's metadata
+                "policy_type": policy_type or "unknown" 
             }
         }
         for i, chunk in enumerate(embedded_chunks)
     ]
-    logging.info(f"[{namespace_id}] Prepared {len(vectors)} vectors for upsert.")
+    logging.info(f"[{namespace_id}] Prepared {len(vectors)} vectors for upsert with enriched metadata.")
 
-    # 4) Upsert to Pinecone using our robust, parallel upsert function
     await async_upsert_batches(vectors, index_name, namespace_id)
     
-    # Give the vector database a moment to index the new data
     logging.info(f"[{namespace_id}] Waiting for indexing to complete...")
-    await asyncio.sleep(5)
+    await asyncio.sleep(10) # Increased delay for better indexing consistency
     
     return True
 
@@ -69,13 +95,12 @@ async def handle_submission(
     questions: List[str],
     temp_dir: str,
     index_name: str,
-    namespace_prefix: str = "rag"
 ) -> List[Dict[str, Any]]:
     """
     High-level orchestration of the RAG pipeline.
     """
     start_total = time.time()
-    namespace_id = f"{namespace_prefix}-{int(start_total)}"
+    namespace_id = f"rag-{int(start_total)}"
     logging.info(f"Starting new RAG pipeline with namespace_id: {namespace_id}")
 
     save_path, filename = await async_download_file(doc_url, temp_dir)
@@ -83,17 +108,12 @@ async def handle_submission(
         return [{"error": "Failed to download document."}] * len(questions)
 
     try:
-        # --- Step 1: Ingest the document ---
         ingestion_success = await _ingest_document(save_path, filename, namespace_id, index_name)
         if not ingestion_success:
             return [{"error": "Failed to process and ingest document."}] * len(questions)
 
-        # --- Step 2: Generate answers in parallel ---
-        # This now calls our final, improved answering function.
-        answers = await generate_answers_in_parallel(questions, namespace_id, index_name)
-        
-        # --- Step 3: Convert results to JSON-serializable format ---
-        # The pipeline now returns structured objects. We convert them to dicts for the API.
+        answers = await generate_answers(questions, namespace_id, index_name)
+
         results = [ans.model_dump() if ans else {"error": "Failed to generate answer."} for ans in answers]
         return results
 
@@ -102,7 +122,6 @@ async def handle_submission(
         return [{"error": "A critical internal error occurred."}] * len(questions)
 
     finally:
-        # --- Step 4: Cleanup ---
         logging.info(f"[{namespace_id}] Starting cleanup process.")
         try:
             await async_delete_namespace(index_name, namespace_id)

@@ -14,13 +14,14 @@ from .answer_schema import FinalAnswer, Justification # Assuming schema is in th
 # Using a higher temperature (e.g., 0.2) can allow for more natural-sounding text.
 llm = ChatOpenAI(
     model="gpt-4-turbo", # Using a more powerful model for the final answer is often a good idea
-    temperature=0.2
+    temperature=0.2,
+     # ✅ Explicitly set this
 )
 
 # --- 2. Create the Answer Generation Chain ---
 # This chain will take the context and question, and force the LLM
 # to output a response that perfectly matches your FinalAnswer schema.
-structured_llm = llm.with_structured_output(FinalAnswer)
+structured_llm = llm.with_structured_output(FinalAnswer, method="function_calling")
 
 # --- 3. Define the System and Human Prompts ---
 # This template is cleaner and more maintainable than a large f-string.

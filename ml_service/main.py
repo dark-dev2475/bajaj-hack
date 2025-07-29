@@ -15,12 +15,23 @@ INDEX_NAME = os.getenv("INDEX_NAME", "polisy-search")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # --- Logging Setup ---
-# Using a structured format can be helpful for log analysis tools
+# This more advanced configuration ensures we see logs from all libraries.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+# --- THIS IS THE FIX ---
+# Force the langchain library to show INFO-level logs, which includes the verbose output.
+logging.getLogger("langchain").setLevel(logging.INFO)
+logging.getLogger("langchain_core").setLevel(logging.INFO)
+# --- END OF FIX ---
+
 logger = logging.getLogger(__name__)
+
+# --- In-Memory Job Store (for demonstration) ---
+# In a real production environment, use a persistent store like Redis or a database.
+job_results: Dict[str, Any] = {}
+
 
 # --- FastAPI App Initialization ---
 app = FastAPI(
@@ -42,7 +53,7 @@ app.add_middleware(
 # --- Pydantic Request Models ---
 class RAGRequest(BaseModel):
     # Corrected field name to match the handler's expectation
-    doc_url: str
+    documents: str
     questions: List[str]
 
 # --- API Endpoints ---
@@ -67,17 +78,17 @@ async def run_rag(data: RAGRequest) -> Dict[str, Any]:
     if not data.questions or not isinstance(data.questions, list):
         raise HTTPException(status_code=400, detail="'questions' must be a non-empty list of strings.")
 
-    logger.info(f"Received RAG request for doc: {data.doc_url} with {len(data.questions)} questions.")
+    logger.info(f"Received RAG request for doc: {data.documents} with {len(data.questions)} questions.")
 
     try:
         # Call the main orchestration handler
-        answers = await handle_submission(data.doc_url, data.questions, UPLOAD_FOLDER, INDEX_NAME)
+        answers = await handle_submission(data.documents, data.questions, UPLOAD_FOLDER, INDEX_NAME)
         
         logger.info(f"Successfully generated {len(answers)} answers for the request.")
         return {"answers": answers}
     
     except Exception as e:
         # Log the full exception traceback for easier debugging in production
-        logger.exception(f"An unhandled error occurred in the RAG pipeline for doc: {data.doc_url}")
+        logger.exception(f"An unhandled error occurred in the RAG pipeline for doc: {data.documents}")
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please check the logs.")
 

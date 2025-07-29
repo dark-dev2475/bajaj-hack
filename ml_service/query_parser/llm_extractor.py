@@ -15,13 +15,14 @@ from .schema import PolicyQuery
 # We initialize the LLM that will perform the extraction.
 llm = ChatOpenAI(
     model="gpt-3.5-turbo",
-    temperature=0 # Use low temperature for predictable, structured output
+    temperature=0,  # Use low temperature for predictable, structured output
+    
 )
 
 # --- 3. Create the Extraction Chain ---
 # This chain binds the LLM to the imported PolicyQuery schema,
 # forcing it to output valid JSON that matches your model.
-structured_llm = llm.with_structured_output(PolicyQuery)
+structured_llm = llm.with_structured_output(PolicyQuery, method="function_calling")
 
 
 # --- 4. Create the Prompt ---

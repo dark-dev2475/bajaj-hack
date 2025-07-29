@@ -25,7 +25,8 @@ async def embed_chunks(
     
     # Run all batch-embedding tasks concurrently
     logging.info(f"Sending {len(tasks)} batches to be processed in parallel.")
-    batch_results = await asyncio.gather(*tasks)
+    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
     
     # Combine the results from all batches
     embedded_chunks = [chunk for batch in batch_results for chunk in batch]

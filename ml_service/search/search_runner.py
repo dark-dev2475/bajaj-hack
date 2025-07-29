@@ -5,95 +5,117 @@ from typing import List, Dict, Any, Optional
 import asyncio
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.chains.query_constructor.base import AttributeInfo
-from langchain.retrievers.self_query.base import SelfQueryRetriever
 from langchain_pinecone import PineconeVectorStore
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
 
 from clients import pinecone_client, openai_async_client
-from query_parser.schema import PolicyQuery
-# Assuming a translator function exists from your previous code
 from .translator import translate_to_english_async
 
-# --- 1. Define Metadata Fields for the Retriever ---
-# This tells the retriever what fields it can filter on in your vector database.
-metadata_field_info = [
-    AttributeInfo(
-        name="policy_type",
-        description="The type of insurance policy, such as 'personal accident', 'health', or 'travel'.",
-        type="string",
-    ),
-    AttributeInfo(
-        name="location",
-        description="The city where the event occurred.",
-        type="string",
-    ),
-    # Add other filterable fields from your metadata here if needed
-]
-
-# --- 2. Initialize Core Components ---
-# These are the building blocks for our retriever.
+# --- 1. Initialize Core Components ---
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+# A powerful LLM is needed for the re-ranking task
+rerank_llm = ChatOpenAI(model="gpt-4-turbo", temperature=0)
+
+
+# --- 2. Define the Re-ranking Logic ---
+# --- THIS IS THE FIX ---
+# The prompt is updated to be more strict, preventing the LLM from adding comments.
+reranker_prompt_template = """
+You are an expert at evaluating the relevance of insurance policy clauses.
+Based on the user's query, score each of the following document chunks on a scale from 0 to 1 for how relevant it is to answering the query.
+Respond **only** with a valid JSON object containing a list of scores, one for each document. Do not include any other text, comments, or explanations.
+
+Example Response: {{"scores": [0.2, 0.9, 0.5]}}
+
+User Query: "{query}"
+
+Documents:
+{documents}
+"""
+# --- END OF FIX ---
+reranker_prompt = PromptTemplate.from_template(reranker_prompt_template)
+
+# This chain will take the query and documents and output a JSON object with scores.
+reranker_chain = reranker_prompt | rerank_llm | JsonOutputParser()
 
 
 async def perform_search_async(
     raw_query: str,
     index_name: str,
     namespace: str,
-    top_k: int = 5, # It's often better to retrieve more docs (e.g., 5) for the LLM to get more context
+    top_k: int = 3, # The final number of chunks to return
 ) -> List[Dict[str, Any]]:
     """
-    Performs an advanced search using LangChain's Self-Querying Retriever.
-    It first translates the query to English to ensure reliable filter generation.
+    Performs a two-step search:
+    1. A broad vector search to retrieve a set of candidate documents.
+    2. An LLM-based re-ranking step to find the most relevant documents from the candidates.
     """
-    logging.info(f"Performing self-query search for: '{raw_query}' in namespace '{namespace}'")
+    logging.info(f"Performing 2-step search for: '{raw_query}' in namespace '{namespace}'")
     
     try:
-        # --- ADDED: Translate query to English for reliability ---
         english_query = await translate_to_english_async(raw_query, openai_async_client)
         logging.info(f"Translated query to English: '{english_query}'")
-        # --- END OF ADDITION ---
 
-        # --- 3. Set up the Pinecone Vector Store as a LangChain object ---
+        # Get the Pinecone index object from our already initialized client.
+        index = pinecone_client.Index(index_name)
+        
+        # Pass the index object directly to the PineconeVectorStore.
         vector_store = PineconeVectorStore(
-            index_name=index_name,
+            index=index,
             embedding=embeddings,
-            pinecone_api_key=pinecone_client.api_key, # Assumes your client has the key
+            text_key="text", # Specify the metadata field containing the text
             namespace=namespace
         )
 
-        # --- 4. Create the Self-Querying Retriever ---
-        retriever = SelfQueryRetriever.from_llm(
-            llm=llm,
-            vectorstore=vector_store,
-            document_contents="The content of an insurance policy clause.",
-            metadata_field_info=metadata_field_info,
-            verbose=True, # Set to True for debugging to see the generated queries
-            k=top_k
-        )
-
-        # --- 5. Invoke the Retriever ---
-        # We run this in a thread because the underlying LangChain invocation can have sync parts.
-        retrieved_docs = await asyncio.to_thread(
-            retriever.invoke,
-            english_query # Use the translated query
-        )
-
-        logging.info(f"Retrieved {len(retrieved_docs)} documents using self-query.")
+        # --- Step 1: Broad Vector Search (Recall) ---
+        # Retrieve more documents than needed (e.g., 10) to cast a wide net.
+        candidate_docs_lc = await vector_store.asimilarity_search(english_query, k=10)
         
-        # --- 6. Format the results ---
-        # Convert the LangChain Document objects back to the dictionary format your pipeline expects.
-        results = [
+        # Format the results into the dictionary structure our re-ranker expects
+        candidate_docs = [
             {
-                "id": doc.metadata.get("id", ""),
-                "score": doc.metadata.get("_score", 0), # LangChain might not always provide a score
                 "metadata": doc.metadata,
                 "chunk_text": doc.page_content
             }
-            for doc in retrieved_docs
+            for doc in candidate_docs_lc
         ]
-        return results
+
+        if not candidate_docs:
+            logging.warning("Initial vector search returned no results.")
+            return []
+        
+        logging.info(f"Retrieved {len(candidate_docs)} candidate documents for re-ranking.")
+
+        # --- Step 2: LLM Re-ranking (Precision) ---
+        # Format documents for the re-ranking prompt
+        docs_for_reranking = "\n\n".join(
+            [f"Document {i+1}:\n{doc['chunk_text']}" for i, doc in enumerate(candidate_docs)]
+        )
+        
+        # Get relevance scores from the LLM
+        response = await reranker_chain.ainvoke({
+            "query": english_query,
+            "documents": docs_for_reranking
+        })
+        scores = response.get("scores", [])
+
+        if len(scores) != len(candidate_docs):
+            logging.error("Re-ranker score count does not match document count. Returning top candidates.")
+            return candidate_docs[:top_k]
+
+        # Combine documents with their new scores
+        scored_docs = sorted(
+            zip(scores, candidate_docs),
+            key=lambda x: x[0],
+            reverse=True
+        )
+
+        # Return the top_k documents with the highest relevance scores
+        final_results = [doc for score, doc in scored_docs[:top_k]]
+        logging.info(f"Re-ranked and selected top {len(final_results)} documents.")
+        return final_results
 
     except Exception as e:
-        logging.exception(f"An error occurred during self-query retrieval: {e}")
+        logging.exception(f"An error occurred during the search and re-rank process: {e}")
         return [{"error": "Failed to perform search."}]
