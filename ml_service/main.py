@@ -11,7 +11,7 @@ from submission_handler.handler import handle_submission
 # --- Configuration ---
 # It's good practice to load these from environment variables for production
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "temp_docs")
-INDEX_NAME = os.getenv("INDEX_NAME", "polisy-search")
+INDEX_NAME = os.getenv("INDEX_NAME", "policy-index")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # --- Logging Setup ---

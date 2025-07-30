@@ -58,18 +58,18 @@ async def ingest_documents_parallel(specific_file: Optional[str] = None) -> List
     """
     Extracts text from documents in parallel using improved cleaning.
     """
-    file_paths = [Path(specific_file)] if specific_file else list(Path("./data").glob("*"))
-    if not file_paths:
-        logging.warning("No documents found in the target directory.")
+    file_path = Path(specific_file)
+    if not file_path.exists():
+        logging.warning(f"Document not found: {file_path}")
         return []
-    
-    logging.info(f"Found {len(file_paths)} files to ingest: {[fp.name for fp in file_paths]}")
-    
-    tasks = [asyncio.to_thread(process_single_file, fp) for fp in file_paths]
+
+    logging.info(f"Found document to ingest: {file_path.name}")
+
+    tasks = [asyncio.to_thread(process_single_file, file_path)]
     
     results = await asyncio.gather(*tasks)
     
     documents = [res for res in results if res is not None]
-    
-    logging.info(f"Successfully ingested {len(documents)} out of {len(file_paths)} document(s).")
+
+    logging.info(f"Successfully ingested {len(documents)} out of 1 document(s).")
     return documents

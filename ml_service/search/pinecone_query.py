@@ -23,7 +23,8 @@ async def _async_pinecone_query(
             vector=vec,
             top_k=top_k,
             include_metadata=True,
-            namespace=namespace
+            namespace=namespace,
+            filter={"namespace": namespace}  # Add namespace filter
         )
         logging.info(f"Pinecone async response: {response}")
         return response.get("matches", [])
