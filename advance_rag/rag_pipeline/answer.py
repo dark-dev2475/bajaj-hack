@@ -1,0 +1,174 @@
+import logging
+from typing import List, Dict, Any
+from retriever import create_auto_merging_retriever
+import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class RAGPipeline:
+    """Complete RAG pipeline that retrieves context and generates answers."""
+    
+    def __init__(
+        self,
+        pinecone_api_key: str,
+        pinecone_environment: str,
+        index_name: str,
+        google_api_key: str,
+        namespace: str = "default",
+        similarity_top_k: int = 3,
+        llm_model: str = "gemini-1.5-flash"
+    ):
+        """
+        Initialize the complete RAG pipeline.
+        
+        Args:
+            pinecone_api_key: Pinecone API key
+            pinecone_environment: Pinecone environment
+            index_name: Pinecone index name
+            google_api_key: Google API key for Gemini Flash
+            namespace: Pinecone namespace
+            similarity_top_k: Number of documents to retrieve
+            llm_model: Gemini model for answer generation
+        """
+        # Initialize retriever
+        self.retriever = create_auto_merging_retriever(
+            pinecone_api_key=pinecone_api_key,
+            pinecone_environment=pinecone_environment,
+            index_name=index_name,
+            namespace=namespace,
+            similarity_top_k=similarity_top_k,
+            simple_ratio_thresh=0.0,
+            verbose=True
+        )
+        
+        # Initialize Gemini
+        genai.configure(api_key=google_api_key)
+        self.model = genai.GenerativeModel(llm_model)
+        self.llm_model = llm_model
+        
+        logger.info("RAG Pipeline initialized successfully with Gemini Flash")
+    
+    def _format_context(self, retrieved_nodes: List[Dict]) -> str:
+        """Format retrieved nodes into context string."""
+        context_parts = []
+        for i, node in enumerate(retrieved_nodes, 1):
+            context_parts.append(f"Document {i}:\n{node['text']}\n")
+        return "\n".join(context_parts)
+    
+    def _generate_answer(self, query: str, context: str) -> Dict[str, Any]:
+        """Generate answer using Gemini Flash."""
+        prompt = f"""You are an expert assistant that answers questions based on the provided context.
+
+Context:
+{context}
+
+Question: {query}
+
+Instructions:
+1. Answer the question based ONLY on the provided context
+2. If the context doesn't contain enough information, say so
+3. Be specific and cite relevant parts of the context
+4. Keep your answer clear and concise
+
+Answer:"""
+
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=500,
+                )
+            )
+            
+            answer = response.text.strip()
+            return {
+                "answer": answer,
+                "model": self.llm_model,
+                "status": "success"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating answer with Gemini: {str(e)}")
+            return {
+                "answer": "Sorry, I encountered an error while generating the answer.",
+                "model": self.llm_model,
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def query(self, question: str) -> Dict[str, Any]:
+        """
+        Complete RAG query - retrieve context and generate answer.
+        
+        Args:
+            question: User's question
+            
+        Returns:
+            Dictionary with answer, context, and metadata
+        """
+        logger.info(f"Processing query: '{question[:50]}...'")
+        
+        # Step 1: Retrieve relevant context
+        retrieved_nodes = self.retriever.retrieve(question)
+        
+        if not retrieved_nodes:
+            return {
+                "question": question,
+                "answer": "I couldn't find any relevant information to answer your question.",
+                "context": [],
+                "status": "no_context"
+            }
+        
+        # Step 2: Format context
+        context = self._format_context(retrieved_nodes)
+        
+        # Step 3: Generate answer
+        answer_result = self._generate_answer(question, context)
+        
+        # Step 4: Return complete response
+        return {
+            "question": question,
+            "answer": answer_result["answer"],
+            "context": retrieved_nodes,
+            "formatted_context": context,
+            "retrieval_count": len(retrieved_nodes),
+            "model": answer_result["model"],
+            "status": answer_result["status"]
+        }
+
+# Simple usage function
+def create_rag_pipeline(
+    pinecone_api_key: str,
+    pinecone_environment: str,
+    index_name: str,
+    google_api_key: str,
+    **kwargs
+) -> RAGPipeline:
+    """Create a complete RAG pipeline ready to answer questions."""
+    return RAGPipeline(
+        pinecone_api_key=pinecone_api_key,
+        pinecone_environment=pinecone_environment,
+        index_name=index_name,
+        google_api_key=google_api_key,
+        **kwargs
+    )
+
+# Example usage:
+"""
+# Initialize pipeline with Gemini Flash
+rag = create_rag_pipeline(
+    pinecone_api_key="your-pinecone-key",
+    pinecone_environment="your-env",
+    index_name="your-index",
+    google_api_key="your-google-api-key"
+)
+
+# Ask questions
+result = rag.query("What is covered under my health insurance policy?")
+print(f"Answer: {result['answer']}")
+print(f"Based on {result['retrieval_count']} retrieved documents")
+"""

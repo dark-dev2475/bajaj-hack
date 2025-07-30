@@ -1,0 +1,36 @@
+# Core libraries
+python-dotenv
+fastapi
+uvicorn
+
+# Gemini LLM support
+llama-index
+llama-index-llms-gemini
+
+# Embeddings via HuggingFace
+llama-index-embeddings-huggingface
+transformers
+sentence-transformers
+
+# Vector DB
+pinecone-client
+
+# Google Gemini SDK
+google-generativeai
+
+# Document loading and processing
+aiohttp
+python-magic
+langchain
+langchain-community
+pypdf
+docx2txt
+unstructured[email]
+
+# (Optional) For concurrency, async requests, and production server
+httpx
+aiofiles
+PyMuPDF
+requests
+tqdm 
+numpy
