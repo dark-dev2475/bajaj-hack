@@ -40,10 +40,10 @@ class HierarchicalParser:
     
     def __init__(
         self,
-        chunk_sizes: List[int] = [512, 256, 128],  # Reduced for large documents
-        chunk_overlap: int = 50,  # Increased overlap for better context
+        chunk_sizes: List[int] = [1024, 512, 256],  # Reduced for faster processing
+        chunk_overlap: int = 20,  # Reduced overlap for speed
         separators: List[str] = ["\n\n", "\n", " ", ""],
-        max_tokens_per_chunk: int = 400  # Token limit for embeddings
+        max_tokens_per_chunk: int = 300  # Reduced token limit for speed
     ):
         """
         Initialize the parser with specified chunk sizes for each level.

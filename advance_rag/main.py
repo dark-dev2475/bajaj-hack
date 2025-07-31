@@ -1,6 +1,7 @@
 import os
 import logging
-from fastapi import FastAPI, HTTPException
+import asyncio
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -72,7 +73,7 @@ async def read_root():
 @app.post("/hackrx/run", tags=["RAG Pipeline"])
 async def run_rag(data: RAGRequest) -> Dict[str, Any]:
     """
-    Main endpoint to run the full RAG pipeline.
+    Main endpoint to run the full RAG pipeline with timeout handling.
     - Downloads a document from a URL.
     - Ingests, chunks, and embeds the content into a vector store.
     - Answers a list of questions based on the document.
@@ -84,11 +85,24 @@ async def run_rag(data: RAGRequest) -> Dict[str, Any]:
     logger.info(f"Received RAG request for doc: {data.documents} with {len(data.questions)} questions.")
 
     try:
-        # Call the main orchestration handler
-        answers = await handle_rag_request(data.documents, data.questions, UPLOAD_FOLDER, INDEX_NAME)
+        # Set a timeout for the entire pipeline (5 minutes max)
+        timeout_seconds = 300  # 5 minutes
+        
+        # Run the pipeline with timeout
+        answers = await asyncio.wait_for(
+            handle_rag_request(data.documents, data.questions, UPLOAD_FOLDER, INDEX_NAME),
+            timeout=timeout_seconds
+        )
         
         logger.info(f"Successfully generated {len(answers)} answers for the request.")
         return {"answers": answers}
+    
+    except asyncio.TimeoutError:
+        logger.error(f"RAG pipeline timed out after {timeout_seconds} seconds for doc: {data.documents}")
+        raise HTTPException(
+            status_code=408, 
+            detail=f"Request timed out after {timeout_seconds} seconds. Try with a smaller document or fewer questions."
+        )
     
     except Exception as e:
         # Log the full exception traceback for easier debugging in production
