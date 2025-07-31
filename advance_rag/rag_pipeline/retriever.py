@@ -3,71 +3,26 @@ from typing import List, Dict, Any, Optional
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
-# LlamaIndex imports for true auto-merging
+# LlamaIndex imports for true auto-merging with local embeddings
 try:
     from llama_index.core.retrievers import AutoMergingRetriever as LlamaAutoMergingRetriever
     from llama_index.core import VectorStoreIndex, StorageContext
     from llama_index.vector_stores.pinecone import PineconeVectorStore
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
     LLAMAINDEX_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     LLAMAINDEX_AVAILABLE = False
+    print(f"LlamaIndex import error: {e}")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# This class remains useful as a fallback
-class BasicRetriever:
-    """A basic retriever that concatenates text from retrieved nodes."""
-    def __init__(self, pinecone_api_key, pinecone_environment, index_name, namespace, similarity_top_k):
-        self.pc = Pinecone(api_key=pinecone_api_key)
-        self.index = self.pc.Index(index_name)
-        self.namespace = namespace
-        self.similarity_top_k = similarity_top_k
-        self.embed_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
-
-    def retrieve(self, query: str) -> List[Dict[str, Any]]:
-        """Retrieve similar nodes with vector DB hit logging."""
-        logger.info(f"BasicRetriever - Starting vector search for query: '{query[:50]}...'")
-        
-        query_embedding = self.embed_model.encode(query, normalize_embeddings=True)
-        
-        logger.info(f"Vector DB Query - Requesting top_{self.similarity_top_k} from namespace '{self.namespace}'")
-        results = self.index.query(
-            vector=query_embedding.tolist(),
-            namespace=self.namespace,
-            top_k=self.similarity_top_k,
-            include_metadata=True
-        )
-        
-        # Log vector database hit details
-        hits_count = len(results.matches)
-        logger.info(f"Vector DB Hit - Retrieved {hits_count}/{self.similarity_top_k} matches from namespace '{self.namespace}'")
-        
-        # In fallback mode, we just merge all retrieved text
-        if not results.matches:
-            logger.warning("Vector DB Hit - No matches found in vector database")
-            return []
-
-        merged_text = " ".join([match.metadata.get("text", "") for match in results.matches])
-        
-        # Return a single merged node
-        merged_node = {
-            "id": results.matches[0].id,
-            "text": merged_text,
-            "score": results.matches[0].score,
-            "metadata": {"source": results.matches[0].metadata.get("source")},
-        }
-        
-        logger.info(f"BasicRetriever Summary - {hits_count} nodes merged into 1 context")
-        return [merged_node]
-
-
 class AutoMergingRetriever:
     """
-    Wrapper around LlamaIndex AutoMergingRetriever to maintain function name compatibility.
-    This ensures your existing code continues to work while using true hierarchical auto-merging.
+    LlamaIndex AutoMergingRetriever with local embeddings.
+    Uses your local BGE embeddings instead of OpenAI.
     """
     
     def __init__(self, llama_retriever, verbose: bool = True):
@@ -88,7 +43,7 @@ class AutoMergingRetriever:
             List of retrieved and auto-merged nodes
         """
         if self.verbose:
-            logger.info(f"LlamaIndex AutoMergingRetriever - Processing query: '{query[:50]}...'")
+            logger.info(f"Using AutoMergingRetriever for retrieval: '{query[:50]}...'")
         
         try:
             # Use LlamaIndex AutoMergingRetriever
@@ -131,8 +86,8 @@ def create_auto_merging_retriever(
     verbose: bool = True
 ) -> Any:
     """
-    Creates AutoMergingRetriever using LlamaIndex when available.
-    Maintains exact function signature for compatibility with your existing code.
+    Creates AutoMergingRetriever using LlamaIndex with your local BGE embeddings.
+    No more fallback - uses only LlamaIndex AutoMergingRetriever.
     
     Args:
         pinecone_api_key: Pinecone API key
@@ -147,60 +102,44 @@ def create_auto_merging_retriever(
     Returns:
         AutoMergingRetriever instance with LlamaIndex hierarchical auto-merging
     """
-    if LLAMAINDEX_AVAILABLE:
-        try:
-            logger.info("LlamaIndex available - Creating true hierarchical AutoMergingRetriever")
-            
-            # 1. Setup Pinecone connection for LlamaIndex
-            pc = Pinecone(api_key=pinecone_api_key)
-            pinecone_index = pc.Index(index_name)
-            vector_store = PineconeVectorStore(pinecone_index=pinecone_index, namespace=namespace)
-            
-            # 2. Create the StorageContext and VectorStoreIndex
-            if not storage_context:
-                storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-            index = VectorStoreIndex.from_vector_store(vector_store=vector_store, storage_context=storage_context)
-
-            # 3. Create the LlamaIndex base retriever and auto-merging retriever
-            base_retriever = index.as_retriever(similarity_top_k=similarity_top_k)
-            llama_auto_merger = LlamaAutoMergingRetriever(
-                base_retriever, 
-                storage_context=storage_context, 
-                verbose=verbose
-            )
-            
-            # 4. Wrap in our compatibility class
-            retriever = AutoMergingRetriever(llama_auto_merger, verbose=verbose)
-            
-            logger.info(f"Successfully created LlamaIndex AutoMergingRetriever with top_k={similarity_top_k}")
-            return retriever
-
-        except Exception as e:
-            logger.error(f"Failed to create LlamaIndex AutoMergingRetriever: {e}")
-            logger.warning("Falling back to BasicRetriever")
-    
-    # Fallback if LlamaIndex is not available or setup failed
     if not LLAMAINDEX_AVAILABLE:
-        logger.warning("LlamaIndex not available - using BasicRetriever fallback")
+        raise ImportError("LlamaIndex is required but not available. Please install: pip install llama-index llama-index-vector-stores-pinecone llama-index-embeddings-huggingface")
     
-    # Create BasicRetriever wrapped as AutoMergingRetriever for compatibility
-    basic_retriever = BasicRetriever(
-        pinecone_api_key=pinecone_api_key,
-        pinecone_environment=pinecone_environment,
-        index_name=index_name,
-        namespace=namespace,
-        similarity_top_k=similarity_top_k
-    )
-    
-    # Wrap BasicRetriever to maintain AutoMergingRetriever interface
-    class BasicAutoMergingRetriever:
-        def __init__(self, basic_retriever, verbose=True):
-            self.basic_retriever = basic_retriever  # Add this for compatibility
-            self.base_retriever = basic_retriever   # Add this for clear_vector_store compatibility
-            self.verbose = verbose
-            
-        def retrieve(self, query: str):
-            return self.basic_retriever.retrieve(query)
-    
-    return BasicAutoMergingRetriever(basic_retriever, verbose=verbose)
+    try:
+        logger.info("Creating LlamaIndex AutoMergingRetriever with local BGE embeddings")
+        
+        # 1. Setup local BGE embeddings (your embeddings, not OpenAI)
+        embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        
+        # 2. Setup Pinecone connection for LlamaIndex
+        pc = Pinecone(api_key=pinecone_api_key)
+        pinecone_index = pc.Index(index_name)
+        vector_store = PineconeVectorStore(pinecone_index=pinecone_index, namespace=namespace)
+        
+        # 3. Create the StorageContext and VectorStoreIndex with your local embeddings
+        if not storage_context:
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        index = VectorStoreIndex.from_vector_store(
+            vector_store=vector_store, 
+            storage_context=storage_context,
+            embed_model=embed_model  # Use your local BGE embeddings
+        )
+
+        # 4. Create the LlamaIndex base retriever and auto-merging retriever
+        base_retriever = index.as_retriever(similarity_top_k=similarity_top_k)
+        llama_auto_merger = LlamaAutoMergingRetriever(
+            base_retriever, 
+            storage_context=storage_context, 
+            verbose=verbose
+        )
+        
+        # 5. Wrap in our compatibility class
+        retriever = AutoMergingRetriever(llama_auto_merger, verbose=verbose)
+        
+        logger.info(f"Successfully created LlamaIndex AutoMergingRetriever with local BGE embeddings, top_k={similarity_top_k}")
+        return retriever
+
+    except Exception as e:
+        logger.error(f"Failed to create LlamaIndex AutoMergingRetriever: {e}")
+        raise RuntimeError(f"AutoMergingRetriever creation failed: {e}")

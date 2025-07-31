@@ -1,36 +1,42 @@
-# Core libraries
-python-dotenv
-fastapi
-uvicorn
+# Core
+fastapi>=0.110.1
+uvicorn[standard]>=0.29.0
+python-dotenv>=1.0.1
 
-# LlamaIndex core and components for hierarchical auto-merging
-llama-index-core
-llama-index
-llama-index-llms-gemini
-llama-index-vector-stores-pinecone
-llama-index-embeddings-huggingface
-transformers
-sentence-transformers
+# LlamaIndex ecosystem
+llama-index==0.12.52
+llama-index-core==0.12.52.post1
+llama-index-vector-stores-pinecone==0.4.2
+llama-index-llms-gemini==0.5.0
+llama-index-embeddings-huggingface==0.5.5
+llama-index-readers-file==0.4.11
+pinecone-client>=3.0.0
 
-# Vector DB
-pinecone
+# Pinecone SDK v3 (required for vector store)
+
+
+# Transformers / Embeddings
+transformers>=4.41.1
+sentence-transformers>=2.7.0
 
 # Google Gemini SDK
-google-generativeai
+google-generativeai>=0.5.2
 
-# Document loading and processing
-aiohttp
-python-magic
-langchain
-langchain-community
-pypdf
-docx2txt
-unstructured[email]
+# LangChain components (if used)
+langchain>=0.1.20
+langchain-community>=0.0.36
 
-# (Optional) For concurrency, async requests, and production server
-httpx
-aiofiles
-PyMuPDF
-requests
-tqdm 
-numpy
+# Document loading
+aiohttp>=3.9.5
+python-magic>=0.4.27
+pypdf>=4.2.0
+# docx2txt>=1.0
+PyMuPDF>=1.24.3
+unstructured[email]>=0.13.2
+
+# Utility
+httpx>=0.27.0
+aiofiles>=23.2.1
+requests>=2.31.0
+tqdm>=4.66.4
+numpy>=1.26.4

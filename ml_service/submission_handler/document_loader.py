@@ -15,7 +15,7 @@ def download_file(url: str, dest_folder: str) -> Tuple[str, str]:
     """
     os.makedirs(dest_folder, exist_ok=True)
     start_time = time.time()
-    response = requests.get(url, timeout=60)
+    response = requests.get(url, timeout=300)  # 5 minutes timeout
     response.raise_for_status()
     download_time = time.time() - start_time
 

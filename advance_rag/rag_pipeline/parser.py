@@ -2,11 +2,9 @@ import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
-import numpy as np
 import uuid  # For generating stable unique IDs
 
 # Document processing
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from langchain.document_loaders import (
     PyPDFLoader,
@@ -16,13 +14,15 @@ from langchain.document_loaders import (
     UnstructuredHTMLLoader
 )
 
-# LlamaIndex imports for better auto-merging
+# LlamaIndex imports for hierarchical parsing
 try:
     from llama_index.core.node_parser import HierarchicalNodeParser
-    from llama_index.core.schema import TextNode, BaseNode
+    from llama_index.core.schema import TextNode, BaseNode, Document as LlamaDocument
     LLAMAINDEX_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     LLAMAINDEX_AVAILABLE = False
+    print(f"LlamaIndex import error: {e}")
+    raise ImportError("LlamaIndex is required. Please install: pip install llama-index")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,56 +43,38 @@ class HierarchicalNode:
 
 class HierarchicalParser:
     """
-    A parser that creates hierarchical representation using LlamaIndex HierarchicalNodeParser when available,
-    falls back to custom implementation otherwise.
+    Simplified parser that uses only LlamaIndex HierarchicalNodeParser.
+    No fallback - requires LlamaIndex to be installed.
     """
     
     def __init__(
         self,
         chunk_sizes: List[int] = [800, 400, 200],  # Accuracy-optimized for richer context
-        chunk_overlap: int = 20,  # Added overlap for better continuity
-        separators: List[str] = ["\n\n", "\n", ". ", " ", ""],  # Added sentence boundary
-        max_tokens_per_chunk: int = 600  # Increased for complete thoughts
+        chunk_overlap: int = 50,  # Added overlap for better continuity
     ):
         """
-        Initialize the parser with specified chunk sizes for each level.
+        Initialize the parser with LlamaIndex HierarchicalNodeParser.
         
         Args:
             chunk_sizes: List of chunk sizes for each level (from largest to smallest)
             chunk_overlap: Number of characters to overlap between chunks
-            separators: List of separators to use for text splitting
         """
+        if not LLAMAINDEX_AVAILABLE:
+            raise ImportError("LlamaIndex is required but not available. Please install: pip install llama-index")
+        
         self.chunk_sizes = chunk_sizes
         self.chunk_overlap = chunk_overlap
-        self.separators = separators
         
-        # Try to use LlamaIndex HierarchicalNodeParser
-        if LLAMAINDEX_AVAILABLE:
-            try:
-                self.llama_parser = HierarchicalNodeParser.from_defaults(
-                    chunk_sizes=chunk_sizes,
-                    chunk_overlap=chunk_overlap
-                )
-                logger.info("Using LlamaIndex HierarchicalNodeParser for optimal hierarchical parsing")
-                self.use_llamaindex = True
-            except Exception as e:
-                logger.warning(f"Failed to initialize LlamaIndex HierarchicalNodeParser: {e}")
-                self.use_llamaindex = False
-        else:
-            logger.info("LlamaIndex not available, using custom hierarchical parser")
-            self.use_llamaindex = False
-        
-        # Fallback: Create text splitters for each level (custom implementation)
-        if not self.use_llamaindex:
-            self.splitters = [
-                RecursiveCharacterTextSplitter(
-                    chunk_size=size,
-                    chunk_overlap=chunk_overlap,
-                    separators=separators,
-                    length_function=len,
-                )
-                for size in chunk_sizes
-            ]
+        # Initialize LlamaIndex HierarchicalNodeParser
+        try:
+            self.llama_parser = HierarchicalNodeParser.from_defaults(
+                chunk_sizes=chunk_sizes,
+                chunk_overlap=chunk_overlap
+            )
+            logger.info("Using LlamaIndex HierarchicalNodeParser for optimal hierarchical parsing")
+        except Exception as e:
+            logger.error(f"Failed to initialize LlamaIndex HierarchicalNodeParser: {e}")
+            raise RuntimeError(f"LlamaIndex HierarchicalNodeParser initialization failed: {e}")
     
     def _load_document(self, file_path: str) -> Document:
         """Load document based on file type."""
@@ -126,56 +108,12 @@ class HierarchicalParser:
         level: int = 0,
         parent: Optional[HierarchicalNode] = None
     ) -> List[HierarchicalNode]:
-        """Recursively create hierarchical nodes from text."""
-        # Base case: if we've reached the maximum level
-        if level >= len(self.chunk_sizes):
-            return []
-        
-        # Split text using current level's splitter
-        splits = self.splitters[level].split_text(text)
-        
-        # Create nodes for this level
-        nodes = []
-        for i, split in enumerate(splits):
-            # Generate stable unique ID for this node
-            node_id = str(uuid.uuid4())
-            
-            # Add parent_id to metadata if this node has a parent
-            node_metadata = {
-                **metadata,
-                "id": node_id,
-                "chunk_size": self.chunk_sizes[level],
-                "chunk_index": i,
-                "level": level
-            }
-            
-            if parent:
-                node_metadata["parent_id"] = parent.metadata["id"]
-            
-            node = HierarchicalNode(
-                content=split,
-                metadata=node_metadata,
-                level=level,
-                parent=parent
-            )
-            
-            # Recursively create child nodes
-            if level < len(self.chunk_sizes) - 1:
-                children = self._create_hierarchical_nodes(
-                    text=split,
-                    metadata=metadata,
-                    level=level + 1,
-                    parent=node
-                )
-                node.children.extend(children)
-            
-            nodes.append(node)
-        
-        return nodes
+        """This method is no longer used - kept for compatibility."""
+        raise NotImplementedError("Custom hierarchical parsing removed. Use LlamaIndex only.")
     
     def parse_document(self, file_path: str) -> List[HierarchicalNode]:
         """
-        Parse a document into a hierarchical structure using LlamaIndex when available.
+        Parse a document into a hierarchical structure using LlamaIndex HierarchicalNodeParser.
         
         Args:
             file_path: Path to the document file
@@ -186,22 +124,6 @@ class HierarchicalParser:
         try:
             # Load the document
             docs = self._load_document(file_path)
-            
-            if self.use_llamaindex:
-                # Use LlamaIndex HierarchicalNodeParser
-                return self._parse_with_llamaindex(docs, file_path)
-            else:
-                # Use custom hierarchical parser
-                return self._parse_with_custom(docs, file_path)
-            
-        except Exception as e:
-            logger.exception(f"Error parsing document {file_path}: {str(e)}")
-            raise
-    
-    def _parse_with_llamaindex(self, docs: List[Document], file_path: str) -> List[HierarchicalNode]:
-        """Parse using LlamaIndex HierarchicalNodeParser."""
-        try:
-            from llama_index.core.schema import Document as LlamaDocument
             
             # Convert LangChain documents to LlamaIndex documents
             llama_docs = []
@@ -215,10 +137,10 @@ class HierarchicalParser:
                 )
                 llama_docs.append(llama_doc)
             
-            # Parse with LlamaIndex
+            # Parse with LlamaIndex HierarchicalNodeParser
             llama_nodes = self.llama_parser.get_nodes_from_documents(llama_docs)
             
-            # Convert LlamaIndex nodes to our HierarchicalNode format
+            # Convert LlamaIndex nodes to our HierarchicalNode format for compatibility
             hierarchical_nodes = []
             for llama_node in llama_nodes:
                 # Extract level from metadata or node type
@@ -245,27 +167,8 @@ class HierarchicalParser:
             return hierarchical_nodes
             
         except Exception as e:
-            logger.error(f"LlamaIndex parsing failed: {e}, falling back to custom parser")
-            return self._parse_with_custom(docs, file_path)
-    
-    def _parse_with_custom(self, docs: List[Document], file_path: str) -> List[HierarchicalNode]:
-        """Parse using custom hierarchical implementation."""
-        all_nodes = []
-        for doc in docs:
-            metadata = {
-                "source": file_path,
-                **doc.metadata
-            }
-            
-            # Create hierarchical structure
-            nodes = self._create_hierarchical_nodes(
-                text=doc.page_content,
-                metadata=metadata
-            )
-            all_nodes.extend(nodes)
-        
-        logger.info(f"Custom parser created {len(all_nodes)} top-level nodes")
-        return all_nodes
+            logger.exception(f"Error parsing document {file_path}: {str(e)}")
+            raise
     
     def get_leaf_nodes(self, nodes: List[HierarchicalNode]) -> List[HierarchicalNode]:
         """Get all leaf nodes (nodes without children) from the hierarchy."""
@@ -300,16 +203,8 @@ class HierarchicalParser:
     def to_llamaindex_nodes(self, nodes: List[HierarchicalNode]) -> List[Dict[str, Any]]:
         """
         Convert hierarchical nodes to LlamaIndex-compatible format with parent-child relationships.
-        If LlamaIndex was used for parsing, return nodes in their native format.
+        Since we're using LlamaIndex HierarchicalNodeParser, nodes are already optimized.
         """
-        if not LLAMAINDEX_AVAILABLE:
-            # Fallback to current format if LlamaIndex not available
-            return self._to_dict_nodes(nodes)
-        
-        if self.use_llamaindex:
-            # If we used LlamaIndex for parsing, nodes are already in optimal format
-            logger.info("Nodes already parsed with LlamaIndex HierarchicalNodeParser - optimal for auto-merging")
-            
         llamaindex_nodes = []
         
         def process_node(node: HierarchicalNode, parent_id: Optional[str] = None):
@@ -324,7 +219,7 @@ class HierarchicalParser:
                     **node.metadata,
                     "node_type": "hierarchical",
                     "level": node.level,
-                    "parser_type": "llamaindex" if self.use_llamaindex else "custom"
+                    "parser_type": "llamaindex_hierarchical"
                 },
                 "level": node.level,
                 "parent_id": parent_id
@@ -340,26 +235,5 @@ class HierarchicalParser:
         for node in nodes:
             process_node(node)
         
-        parser_type = "LlamaIndex HierarchicalNodeParser" if self.use_llamaindex else "custom parser"
-        logger.info(f"Converted {len(llamaindex_nodes)} nodes from {parser_type} to LlamaIndex format")
+        logger.info(f"Converted {len(llamaindex_nodes)} nodes from LlamaIndex HierarchicalNodeParser for AutoMergingRetriever")
         return llamaindex_nodes
-    
-    def _to_dict_nodes(self, nodes: List[HierarchicalNode]) -> List[Dict[str, Any]]:
-        """Convert hierarchical nodes to dictionary format (fallback)."""
-        dict_nodes = []
-        
-        def process_node(node: HierarchicalNode):
-            dict_node = {
-                "text": node.content,
-                "metadata": node.metadata,
-                "level": node.level
-            }
-            dict_nodes.append(dict_node)
-            
-            for child in node.children:
-                process_node(child)
-        
-        for node in nodes:
-            process_node(node)
-        
-        return dict_nodes

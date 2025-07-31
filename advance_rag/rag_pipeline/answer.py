@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 from .retriever import create_auto_merging_retriever
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,6 +49,9 @@ class RAGPipeline:
         self.model = genai.GenerativeModel(llm_model)
         self.llm_model = llm_model
         
+        # Log retriever type for verification
+        retriever_type = type(self.retriever).__name__
+        logger.info(f"RAG Pipeline initialized with {retriever_type} - AutoMerging: {'AutoMerging' in retriever_type}")
         logger.info("RAG Pipeline initialized successfully with Gemini Flash")
     
     def clear_vector_store(self) -> bool:
@@ -136,54 +139,60 @@ class RAGPipeline:
     def _generate_answer(self, query: str, context: str) -> Dict[str, Any]:
         """Generate answer using Gemini Flash."""
         prompt = f"""
-### ROLE ###
-You are an expert analyst. Your primary goal is to synthesize a complete and direct answer to the user's question based on the provided sources.
+You are a senior policy analyst tasked with generating a fact-based, legally accurate answer using only the provided policy documents. Analyze and synthesize all relevant information carefully.
 
-### SOURCES ###
+---
+
+### 📄 SOURCES:
 {context}
-Extract and explicitly include all eligibility conditions, thresholds, or constraints
-– Example: “Eligible only after X months,” “Limited to Y uses,” or “Subject to approval.”
 
-Mention all time-bound conditions such as waiting periods, lock-ins, or grace periods
-– Always state if something is effective only after a certain duration or time frame.
+---
 
-Use complete definitions for key terms exactly as stated in the document
-– Include all clauses, thresholds, or structure if a term like “Hospital,” “Beneficiary,” “Violation,” etc. is defined.
-
-Always include exceptions, limitations, and exclusions if mentioned
-– If coverage or validity depends on special cases, always mention those clearly.
-
-State any scope or applicability restrictions
-– For example: “Only applies to females over 18,” or “Only valid if performed in accredited centers.”
-
-Avoid assuming or inferring beyond what is explicitly stated
-– If a condition or clause is not mentioned, say: “Not specified in the document.”
-
-If multiple clauses affect the same answer, summarize them collectively but accurately.
-
-### QUESTION ###
+### ❓ QUESTION:
 {query}
 
-### CORE INSTRUCTION ###
-Analyze the sources to construct the most accurate and comprehensive answer possible. Your default behavior should be to directly answer the question by synthesizing the information you find.
+---
 
-### RESPONSE PROTOCOL ###
+### ✅ INSTRUCTIONS:
 
-1.  **Direct Answer First (Primary Goal):**
-    * Thoroughly analyze all sources. If the information is present, even if spread across multiple parts, synthesize it into a confident, direct answer.
-    * Support your answer with integrated details and brief quotes from the text. This should be your approach for 90% of questions.
+1. **Start with a Direct Answer:**
+   - Derive a clear, comprehensive response based *strictly on the text* in the sources.
+   - Include every *eligibility criteria, clause, threshold, or condition* mentioned — even if scattered across sections.
+   - Use specific terminology and short quotes from the source when helpful.
+   - Maintain formality, clarity, and legal accuracy in tone.
 
-2.  **Fallback for Incomplete Information (Secondary Goal):**
-    * **Only if a direct, synthesized answer is impossible to create**, should you use this fallback protocol.
-    * **A. State the Limitation:** Begin by clearly stating *which specific part* of the question cannot be answered. (e.g., "While the text explains Kavery's actions, it does not state her internal motivations.")
-    * **B. Provide Helpful Context:** Then, add a section like **`Related Findings:`** and provide the most relevant facts you *did* find that might help the user.
+2. **If Full Answer is Not Found:**
+   - Explicitly state: **"Answer not fully specified in the document."**
+   - Then add a **`Related Findings:`** section with partially relevant or contextually related details, if available.
 
-### CRITICAL CONSTRAINTS ###
--   NEVER invent or assume information.
--   Prioritize synthesizing a direct answer over defaulting to the "incomplete information" fallback.
+---
 
-### FINAL ANSWER ###
+### 🔍 REQUIRED CONTENT IF PRESENT IN SOURCES:
+- Definitions (e.g., “Hospital”, “Dependent”).
+- Eligibility criteria, conditions, age/income limits.
+- Time-bound clauses (e.g., “after 6 months”, “every 3 years”).
+- Roles and responsibilities (e.g., who may apply, who administers).
+- Exclusions, exceptions, restrictions, limitations.
+- Frequencies, timelines, deadlines.
+
+---
+
+### ❌ DO NOT:
+- Do not make assumptions or add information not in the sources.
+- Do not summarize vaguely — be precise and complete.
+- Do not answer if the sources do not support the response.
+
+---
+
+### 📌 FORMAT:
+
+**Final Answer:**  
+[Insert direct, concise answer here.]
+
+**Related Findings (if needed):**  
+- [Bullet points or context from source if direct answer is missing.]
 """
+
         try:
             response = self.model.generate_content(
                 prompt,
@@ -220,6 +229,10 @@ Analyze the sources to construct the most accurate and comprehensive answer poss
             Dictionary with answer, context, and metadata
         """
         logger.info(f"Processing query: '{question[:50]}...'")
+        
+        # Log which retriever is being used
+        retriever_type = type(self.retriever).__name__
+        logger.info(f"Using {retriever_type} for retrieval")
         
         # Step 1: Retrieve relevant context
         retrieved_nodes = self.retriever.retrieve(question)

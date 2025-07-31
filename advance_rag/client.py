@@ -2,7 +2,8 @@
 import os
 import logging
 from dotenv import load_dotenv
-from pinecone import Pinecone, ServerlessSpec
+# from pinecone import Pinecone, ServerlessSpec
+import pinecone as Pinecone
 import google.generativeai as genai
 
 # Load environment variables

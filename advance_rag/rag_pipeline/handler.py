@@ -81,32 +81,19 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
         embedder.embed_and_store(leaf_nodes)
         logger.info("Successfully embedded and stored all nodes")
         
-        # Step 4: Initialize enhanced RAG pipeline with LlamaIndex AutoMergingRetriever
-        logger.info("Initializing enhanced RAG pipeline with auto-merging capabilities")
+        # Step 4: Initialize RAG pipeline (it already creates AutoMergingRetriever internally)
+        logger.info("Initializing RAG pipeline with built-in LlamaIndex AutoMergingRetriever")
         
-        # Create the enhanced auto-merging retriever
-        auto_merging_retriever = create_auto_merging_retriever(
-            pinecone_api_key=pinecone_api_key,
-            pinecone_environment=pinecone_env,
-            index_name=index_name,
-            namespace="documents",
-            similarity_top_k=5,  # Accuracy-optimized
-            simple_ratio_thresh=0.0,  # Merge all for maximum context
-            verbose=True
-        )
-        
-        # Initialize RAG pipeline with enhanced retriever
         rag_pipeline = RAGPipeline(
             pinecone_api_key=pinecone_api_key,
             pinecone_environment=pinecone_env,
             index_name=index_name,
             google_api_key=google_api_key,
             namespace="documents",
-            similarity_top_k=5
+            similarity_top_k=5  # Accuracy-optimized setting
         )
         
-        # Replace the retriever with our enhanced auto-merging version
-        rag_pipeline.retriever = auto_merging_retriever
+        logger.info("RAG pipeline initialized with enhanced auto-merging capabilities")
         
         # Step 5: Answer each question with enhanced logging
         answers = []
