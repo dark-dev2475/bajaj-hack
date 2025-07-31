@@ -10,6 +10,7 @@ import pinecone
 from .document_loader import DocumentLoader
 from .parser import HierarchicalParser
 from .embedder import HierarchicalEmbedder
+from .retriever import create_auto_merging_retriever
 from .answer import RAGPipeline
 from dotenv import load_dotenv
 
@@ -19,7 +20,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def handle_rag_request(document_url: str, questions: List[str], upload_folder: str, index_name: str) -> List[Dict[str, Any]]:
+async def handle_rag_request(document_url: str, questions: List[str], upload_folder: str, index_name: str) -> List[str]:
     """
     Handles the full RAG flow:
     1. Download the document from URL
@@ -61,14 +62,14 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
         # Step 2: Parse document into hierarchical structure
         logger.info("Parsing document into hierarchical chunks")
         parser = HierarchicalParser(
-            chunk_sizes=[1024, 512, 256],
-            chunk_overlap=0
+            chunk_sizes=[800, 400, 200],  # Accuracy-optimized values
+            chunk_overlap=50  # Added overlap for better continuity
         )
         hierarchical_nodes = parser.parse_document(file_path)
         leaf_nodes = parser.get_leaf_nodes(hierarchical_nodes)
         logger.info(f"Created {len(hierarchical_nodes)} top-level nodes, {len(leaf_nodes)} leaf nodes")
         
-        # Step 3: Embed and store leaf nodes
+        # Step 3: Embed and store leaf nodes (for hierarchical auto-merging)
         logger.info("Embedding and storing leaf nodes in Pinecone")
         embedder = HierarchicalEmbedder(
             pinecone_api_key=pinecone_api_key,
@@ -76,18 +77,25 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
             index_name=index_name,
             namespace="documents"
         )
-        await embedder.embed_and_store(leaf_nodes)
-         
-
-         
-       
-
-        # Process documents (instead of hierarchical_nodes, use original documents)
-          # You'll need the original documents
-         
+        # Remove await since embed_and_store is no longer async
+        embedder.embed_and_store(leaf_nodes)
         logger.info("Successfully embedded and stored all nodes")
         
-        # Step 4: Initialize RAG pipeline for question answering
+        # Step 4: Initialize enhanced RAG pipeline with LlamaIndex AutoMergingRetriever
+        logger.info("Initializing enhanced RAG pipeline with auto-merging capabilities")
+        
+        # Create the enhanced auto-merging retriever
+        auto_merging_retriever = create_auto_merging_retriever(
+            pinecone_api_key=pinecone_api_key,
+            pinecone_environment=pinecone_env,
+            index_name=index_name,
+            namespace="documents",
+            similarity_top_k=5,  # Accuracy-optimized
+            simple_ratio_thresh=0.0,  # Merge all for maximum context
+            verbose=True
+        )
+        
+        # Initialize RAG pipeline with enhanced retriever
         rag_pipeline = RAGPipeline(
             pinecone_api_key=pinecone_api_key,
             pinecone_environment=pinecone_env,
@@ -97,7 +105,10 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
             similarity_top_k=5
         )
         
-        # Step 5: Answer each question
+        # Replace the retriever with our enhanced auto-merging version
+        rag_pipeline.retriever = auto_merging_retriever
+        
+        # Step 5: Answer each question with enhanced logging
         answers = []
         for i, question in enumerate(questions):
             logger.info(f"Processing question {i+1}/{len(questions)}: {question[:50]}...")
@@ -106,6 +117,11 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
                 answer_result = rag_pipeline.query(question)
                 # Extract only the answer text for the simplified response format
                 answers.append(answer_result["answer"])
+                
+                # Log retrieval stats for monitoring
+                if "retrieval_count" in answer_result:
+                    logger.info(f"Question {i+1} - Retrieved {answer_result['retrieval_count']} contexts")
+                    
             except Exception as e:
                 logger.error(f"Error answering question {i+1}: {str(e)}")
                 # Return error message as a simple string to maintain consistency
@@ -117,12 +133,15 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
         
         # Step 6: Clear the vector store after all questions are processed
         logger.info("Clearing vector store...")
-        if rag_pipeline.clear_vector_store():
-             logger.info("Vector store cleared successfully")
-        else:
-            logger.warning("Failed to clear vector store")
+        try:
+            if rag_pipeline.clear_vector_store():
+                logger.info("Vector store cleared successfully")
+            else:
+                logger.warning("Failed to clear vector store")
+        except Exception as e:
+            logger.warning(f"Error clearing vector store: {e}")
         
-        logger.info(f"Successfully processed {len(questions)} questions")
+        logger.info(f"Successfully processed {len(questions)} questions with enhanced auto-merging")
         return answers
         
     except Exception as e:

@@ -141,6 +141,25 @@ You are an expert analyst. Your primary goal is to synthesize a complete and dir
 
 ### SOURCES ###
 {context}
+Extract and explicitly include all eligibility conditions, thresholds, or constraints
+– Example: “Eligible only after X months,” “Limited to Y uses,” or “Subject to approval.”
+
+Mention all time-bound conditions such as waiting periods, lock-ins, or grace periods
+– Always state if something is effective only after a certain duration or time frame.
+
+Use complete definitions for key terms exactly as stated in the document
+– Include all clauses, thresholds, or structure if a term like “Hospital,” “Beneficiary,” “Violation,” etc. is defined.
+
+Always include exceptions, limitations, and exclusions if mentioned
+– If coverage or validity depends on special cases, always mention those clearly.
+
+State any scope or applicability restrictions
+– For example: “Only applies to females over 18,” or “Only valid if performed in accredited centers.”
+
+Avoid assuming or inferring beyond what is explicitly stated
+– If a condition or clause is not mentioned, say: “Not specified in the document.”
+
+If multiple clauses affect the same answer, summarize them collectively but accurately.
 
 ### QUESTION ###
 {query}

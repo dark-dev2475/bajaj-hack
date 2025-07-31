@@ -3,11 +3,11 @@ python-dotenv
 fastapi
 uvicorn
 
-# Gemini LLM support
+# LlamaIndex core and components for hierarchical auto-merging
+llama-index-core
 llama-index
 llama-index-llms-gemini
-
-# Embeddings via HuggingFace
+llama-index-vector-stores-pinecone
 llama-index-embeddings-huggingface
 transformers
 sentence-transformers

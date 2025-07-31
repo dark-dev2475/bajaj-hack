@@ -126,16 +126,18 @@ class HierarchicalEmbedder:
         """Create vector records for Pinecone insertion."""
         vectors = []
         for node, text, embedding in zip(nodes, batch_texts, embeddings):
-            # Normalize the embedding
-            normalized_embedding = self._normalize_vector(embedding)
-            
             # Clean the text one more time before storing
             clean_text = text.strip()
             
-            # Create vector record
+            # Use stable ID from metadata (assigned during parsing)
+            node_id = node.metadata.get('id', f"fallback_{hash(clean_text)}")
+            if node_id.startswith('fallback_'):
+                logger.warning(f"Node missing stable ID, using fallback: {node_id}")
+            
+            # Create vector record with normalized embeddings (already normalized by encode())
             vector = {
-                "id": f"node_{hash(clean_text)}",
-                "values": normalized_embedding.tolist(),
+                "id": node_id,
+                "values": embedding.tolist(),  # Already normalized, no need for _normalize_vector
                 "metadata": {
                     **node.metadata,
                     "text": clean_text,
@@ -146,7 +148,7 @@ class HierarchicalEmbedder:
             vectors.append(vector)
         return vectors
     
-    async def embed_and_store(self, leaf_nodes: List[HierarchicalNode]) -> None:
+    def embed_and_store(self, leaf_nodes: List[HierarchicalNode]) -> None:
         """
         Embed leaf nodes and store them in Pinecone.
         
@@ -161,10 +163,10 @@ class HierarchicalEmbedder:
             batch_texts = [self._truncate_text(node.content) for node in batch_nodes]  # Truncate texts
             
             try:
-                # Generate embeddings
+                # Generate embeddings (already normalized)
                 embeddings = self.embed_model.encode(
                     batch_texts,
-                    normalize_embeddings=True  # Ensure unit length
+                    normalize_embeddings=True  # Ensures unit length normalization
                 )
                 
                 # Create Pinecone vector records
@@ -201,6 +203,8 @@ class HierarchicalEmbedder:
         Returns:
             List of matching documents with scores
         """
+        logger.info(f"Vector DB Query - Searching for top_{top_k} results for query: '{query[:50]}...'")
+        
         # Generate query embedding
         truncated_query = self._truncate_text(query)  # Truncate query too
         query_embedding = self.embed_model.encode(
@@ -215,6 +219,17 @@ class HierarchicalEmbedder:
             top_k=top_k,
             include_metadata=True
         )
+        
+        # Log vector database hit details
+        hits_count = len(results.matches)
+        logger.info(f"Vector DB Hit - Retrieved {hits_count}/{top_k} matches from namespace '{self.namespace}'")
+        
+        if hits_count > 0:
+            scores = [match.score for match in results.matches]
+            avg_score = sum(scores) / len(scores)
+            logger.info(f"Vector DB Scores - Min: {min(scores):.4f}, Max: {max(scores):.4f}, Avg: {avg_score:.4f}")
+        else:
+            logger.warning("Vector DB Hit - No matches found in vector database")
         
         return [
             {
