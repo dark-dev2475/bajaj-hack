@@ -73,26 +73,59 @@ class RAGPipeline:
             return False
     
     def _format_context(self, retrieved_nodes: List[Dict]) -> str:
-        """Format retrieved nodes into context string with length limits."""
+        """Format retrieved nodes into context string with clean sentence boundaries."""
         context_parts = []
         total_length = 0
         max_context_length = 3000  # Conservative limit for Gemini
         
         for i, node in enumerate(retrieved_nodes, 1):
-            node_text = node['text']
+            node_text = node['text'].strip()
             
-            # Truncate individual nodes if too long
+            # Clean truncation for long nodes while preserving sentence boundaries
             if len(node_text) > 800:
-                node_text = node_text[:800] + "..."
+                # Find the last complete sentence within 800 chars
+                truncated = node_text[:800]
+                for delimiter in ['. ', '! ', '? ']:
+                    last_pos = truncated.rfind(delimiter)
+                    if last_pos > 600:  # At least 75% of target length
+                        node_text = truncated[:last_pos + 1].strip()
+                        break
+                else:
+                    # Fallback: find last word boundary and add period
+                    words = truncated.split()
+                    if len(words) > 1:
+                        node_text = ' '.join(words[:-1]).strip()
+                        if not node_text.endswith(('.', '!', '?')):
+                            node_text += '.'
+                    else:
+                        node_text = truncated.strip()
+                        if not node_text.endswith(('.', '!', '?')):
+                            node_text += '.'
             
             context_part = f"Document {i}:\n{node_text}\n"
             
             if total_length + len(context_part) > max_context_length:
-                # Add partial content if there's meaningful space
+                # Add partial content with clean boundaries
                 remaining_space = max_context_length - total_length
                 if remaining_space > 200:
-                    partial_text = node_text[:remaining_space-50]
-                    context_parts.append(f"Document {i} [Partial]:\n{partial_text}...\n")
+                    # Find last sentence boundary within remaining space
+                    partial_limit = remaining_space - 50
+                    partial_text = node_text[:partial_limit]
+                    
+                    for delimiter in ['. ', '! ', '? ']:
+                        last_pos = partial_text.rfind(delimiter)
+                        if last_pos > partial_limit * 0.7:
+                            partial_text = partial_text[:last_pos + 1].strip()
+                            break
+                    else:
+                        # Word boundary fallback
+                        words = partial_text.split()
+                        if len(words) > 1:
+                            partial_text = ' '.join(words[:-1]).strip()
+                            if not partial_text.endswith(('.', '!', '?')):
+                                partial_text += '.'
+                    
+                    context_parts.append(f"Document {i} [Partial]:\n{partial_text}\n")
                 break
             
             context_parts.append(context_part)

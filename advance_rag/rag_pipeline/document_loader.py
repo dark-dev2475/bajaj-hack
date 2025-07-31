@@ -7,7 +7,7 @@ from typing import Optional, Union, List
 import aiohttp
 import asyncio
 from urllib.parse import urlparse, unquote
-from pinecone import Pinecone, ServerlessSpec
+
 # Try to import magic, but handle gracefully if not available
 try:
     import magic

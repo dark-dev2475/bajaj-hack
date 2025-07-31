@@ -70,25 +70,52 @@ class HierarchicalEmbedder:
         return vector / norm
     
     def _truncate_text(self, text: str) -> str:
-        """Truncate text to maximum length to avoid token limits."""
+        """Truncate text to maximum length while preserving complete sentences."""
         if len(text) <= self.max_text_length:
-            return text
+            return text.strip()
         
-        # Truncate and try to end at a sentence boundary
+        # Clean up the text first
+        text = text.strip()
+        
+        # Try to find a good sentence boundary within the limit
         truncated = text[:self.max_text_length]
         
-        # Find last sentence ending
-        for delimiter in ['. ', '! ', '? ', '\n']:
-            last_pos = truncated.rfind(delimiter)
-            if last_pos > self.max_text_length * 0.7:  # At least 70% of target length
-                return truncated[:last_pos + len(delimiter)]
+        # Look for sentence endings in order of preference
+        sentence_endings = ['. ', '! ', '? ']
         
-        # Fallback: truncate at word boundary
+        for delimiter in sentence_endings:
+            last_pos = truncated.rfind(delimiter)
+            if last_pos > self.max_text_length * 0.6:  # At least 60% of target length
+                # Include the delimiter and return clean sentence
+                result = truncated[:last_pos + 1].strip()
+                # Remove any trailing incomplete parts
+                if result and not result.endswith(('.', '!', '?')):
+                    result += '.'
+                return result
+        
+        # If no sentence boundary found, try paragraph breaks
+        last_para = truncated.rfind('\n')
+        if last_para > self.max_text_length * 0.5:
+            result = truncated[:last_para].strip()
+            if result and not result.endswith(('.', '!', '?')):
+                result += '.'
+            return result
+        
+        # Fallback: find last complete word and ensure proper ending
         words = truncated.split()
         if len(words) > 1:
-            return ' '.join(words[:-1]) + '...'
+            # Remove last word to avoid cutoffs
+            result = ' '.join(words[:-1]).strip()
+            # Ensure it ends properly
+            if result and not result.endswith(('.', '!', '?')):
+                result += '.'
+            return result
         
-        return truncated + '...'
+        # Last resort: return truncated text with proper ending
+        result = truncated.strip()
+        if result and not result.endswith(('.', '!', '?')):
+            result += '.'
+        return result
     
     def _create_pinecone_vectors(
         self,
@@ -102,13 +129,16 @@ class HierarchicalEmbedder:
             # Normalize the embedding
             normalized_embedding = self._normalize_vector(embedding)
             
+            # Clean the text one more time before storing
+            clean_text = text.strip()
+            
             # Create vector record
             vector = {
-                "id": f"node_{hash(text)}",
+                "id": f"node_{hash(clean_text)}",
                 "values": normalized_embedding.tolist(),
                 "metadata": {
                     **node.metadata,
-                    "text": text,
+                    "text": clean_text,
                     "level": node.level,
                     "model": "bge-small-en-v1.5"
                 }

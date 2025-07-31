@@ -13,17 +13,24 @@ transformers
 sentence-transformers
 
 # Vector DB
-pinecone-client
+pinecone
 
 # Google Gemini SDK
 google-generativeai
+
+# Document loading and processing
+aiohttp
+python-magic
+langchain
+langchain-community
+pypdf
+docx2txt
+unstructured[email]
 
 # (Optional) For concurrency, async requests, and production server
 httpx
 aiofiles
 PyMuPDF
 requests
-sentence-transformers 
-pinecone-client
- tqdm 
- numpy
+tqdm 
+numpy
