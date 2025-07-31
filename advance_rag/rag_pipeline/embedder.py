@@ -20,7 +20,8 @@ class HierarchicalEmbedder:
         index_name: str,
         namespace: str = "default",
         model_name: str = "BAAI/bge-small-en-v1.5",
-        batch_size: int = 32
+        batch_size: int = 20,  # Reduced batch size for large documents
+        max_text_length: int = 512  # Maximum text length for embeddings
     ):
         """
         Initialize the embedder with Pinecone and HuggingFace settings.
@@ -36,6 +37,7 @@ class HierarchicalEmbedder:
         self.index_name = index_name
         self.namespace = namespace
         self.batch_size = batch_size
+        self.max_text_length = max_text_length
         
         # Initialize Pinecone
         self.pc = Pinecone(api_key=pinecone_api_key)
@@ -66,6 +68,27 @@ class HierarchicalEmbedder:
         if norm == 0:
             return vector
         return vector / norm
+    
+    def _truncate_text(self, text: str) -> str:
+        """Truncate text to maximum length to avoid token limits."""
+        if len(text) <= self.max_text_length:
+            return text
+        
+        # Truncate and try to end at a sentence boundary
+        truncated = text[:self.max_text_length]
+        
+        # Find last sentence ending
+        for delimiter in ['. ', '! ', '? ', '\n']:
+            last_pos = truncated.rfind(delimiter)
+            if last_pos > self.max_text_length * 0.7:  # At least 70% of target length
+                return truncated[:last_pos + len(delimiter)]
+        
+        # Fallback: truncate at word boundary
+        words = truncated.split()
+        if len(words) > 1:
+            return ' '.join(words[:-1]) + '...'
+        
+        return truncated + '...'
     
     def _create_pinecone_vectors(
         self,
@@ -105,7 +128,7 @@ class HierarchicalEmbedder:
         # Process in batches
         for i in tqdm(range(0, len(leaf_nodes), self.batch_size)):
             batch_nodes = leaf_nodes[i:i + self.batch_size]
-            batch_texts = [node.content for node in batch_nodes]
+            batch_texts = [self._truncate_text(node.content) for node in batch_nodes]  # Truncate texts
             
             try:
                 # Generate embeddings
@@ -149,8 +172,9 @@ class HierarchicalEmbedder:
             List of matching documents with scores
         """
         # Generate query embedding
+        truncated_query = self._truncate_text(query)  # Truncate query too
         query_embedding = self.embed_model.encode(
-            query,
+            truncated_query,
             normalize_embeddings=True
         )
         

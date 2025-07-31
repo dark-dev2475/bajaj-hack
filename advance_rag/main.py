@@ -9,6 +9,7 @@ load_dotenv()
 
 # Import the main pipeline handler
 from rag_pipeline.handler import handle_rag_request
+from rag_pipeline.pts_handler import handle_pts_rag_request
 
 # --- Configuration ---
 # It's good practice to load these from environment variables for production

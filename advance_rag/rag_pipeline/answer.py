@@ -59,13 +59,13 @@ class RAGPipeline:
             bool: True if successful, False otherwise
         """
         try:
-            # Initialize Pinecone client
-            pc = Pinecone(api_key=self.retriever.pinecone_api_key)
-            index = pc.Index(self.retriever.index_name)
+            # Access Pinecone through the base retriever
+            base_retriever = self.retriever.base_retriever
+            index = base_retriever.index  # Use existing connection
             
             # Delete all vectors in the namespace
-            index.delete(delete_all=True, namespace=self.retriever.namespace)
-            logger.info(f"Successfully cleared vector store namespace: {self.retriever.namespace}")
+            index.delete(delete_all=True, namespace=base_retriever.namespace)
+            logger.info(f"Successfully cleared vector store namespace: {base_retriever.namespace}")
             return True
             
         except Exception as e:
@@ -73,10 +73,31 @@ class RAGPipeline:
             return False
     
     def _format_context(self, retrieved_nodes: List[Dict]) -> str:
-        """Format retrieved nodes into context string."""
+        """Format retrieved nodes into context string with length limits."""
         context_parts = []
+        total_length = 0
+        max_context_length = 3000  # Conservative limit for Gemini
+        
         for i, node in enumerate(retrieved_nodes, 1):
-            context_parts.append(f"Document {i}:\n{node['text']}\n")
+            node_text = node['text']
+            
+            # Truncate individual nodes if too long
+            if len(node_text) > 800:
+                node_text = node_text[:800] + "..."
+            
+            context_part = f"Document {i}:\n{node_text}\n"
+            
+            if total_length + len(context_part) > max_context_length:
+                # Add partial content if there's meaningful space
+                remaining_space = max_context_length - total_length
+                if remaining_space > 200:
+                    partial_text = node_text[:remaining_space-50]
+                    context_parts.append(f"Document {i} [Partial]:\n{partial_text}...\n")
+                break
+            
+            context_parts.append(context_part)
+            total_length += len(context_part)
+        
         return "\n".join(context_parts)
     
     def _generate_answer(self, query: str, context: str) -> Dict[str, Any]:

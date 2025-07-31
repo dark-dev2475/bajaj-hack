@@ -77,6 +77,14 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
             namespace="documents"
         )
         await embedder.embed_and_store(leaf_nodes)
+         
+
+         
+       
+
+        # Process documents (instead of hierarchical_nodes, use original documents)
+          # You'll need the original documents
+         
         logger.info("Successfully embedded and stored all nodes")
         
         # Step 4: Initialize RAG pipeline for question answering
@@ -102,11 +110,15 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
                 logger.error(f"Error answering question {i+1}: {str(e)}")
                 # Return error message as a simple string to maintain consistency
                 answers.append(f"Error processing question: {str(e)}")
+       
+      
+
+
         
         # Step 6: Clear the vector store after all questions are processed
         logger.info("Clearing vector store...")
         if rag_pipeline.clear_vector_store():
-            logger.info("Vector store cleared successfully")
+             logger.info("Vector store cleared successfully")
         else:
             logger.warning("Failed to clear vector store")
         
