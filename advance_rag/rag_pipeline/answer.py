@@ -18,7 +18,7 @@ class RAGPipeline:
         index_name: str,
         google_api_key: str,
         namespace: str = "default",
-        similarity_top_k: int = 3,
+        similarity_top_k: int = 5,  # Increased for more comprehensive context
         llm_model: str = "gemini-1.5-flash"
     ):
         """
@@ -76,7 +76,7 @@ class RAGPipeline:
         """Format retrieved nodes into context string with clean sentence boundaries."""
         context_parts = []
         total_length = 0
-        max_context_length = 3000  # Conservative limit for Gemini
+        max_context_length = 3000  # Increased for richer context and better accuracy
         
         for i, node in enumerate(retrieved_nodes, 1):
             node_text = node['text'].strip()
@@ -135,27 +135,42 @@ class RAGPipeline:
     
     def _generate_answer(self, query: str, context: str) -> Dict[str, Any]:
         """Generate answer using Gemini Flash."""
-        prompt = f"""You are an expert assistant that answers questions based on the provided context.
+        prompt = f"""
+### ROLE ###
+You are an expert analyst. Your primary goal is to synthesize a complete and direct answer to the user's question based on the provided sources.
 
-Context:
+### SOURCES ###
 {context}
 
-Question: {query}
+### QUESTION ###
+{query}
 
-Instructions:
-1. Answer the question based ONLY on the provided context
-2. If the context doesn't contain enough information, say so
-3. Be specific and cite relevant parts of the context
-4. Keep your answer clear and concise
+### CORE INSTRUCTION ###
+Analyze the sources to construct the most accurate and comprehensive answer possible. Your default behavior should be to directly answer the question by synthesizing the information you find.
 
-Answer:"""
+### RESPONSE PROTOCOL ###
 
+1.  **Direct Answer First (Primary Goal):**
+    * Thoroughly analyze all sources. If the information is present, even if spread across multiple parts, synthesize it into a confident, direct answer.
+    * Support your answer with integrated details and brief quotes from the text. This should be your approach for 90% of questions.
+
+2.  **Fallback for Incomplete Information (Secondary Goal):**
+    * **Only if a direct, synthesized answer is impossible to create**, should you use this fallback protocol.
+    * **A. State the Limitation:** Begin by clearly stating *which specific part* of the question cannot be answered. (e.g., "While the text explains Kavery's actions, it does not state her internal motivations.")
+    * **B. Provide Helpful Context:** Then, add a section like **`Related Findings:`** and provide the most relevant facts you *did* find that might help the user.
+
+### CRITICAL CONSTRAINTS ###
+-   NEVER invent or assume information.
+-   Prioritize synthesizing a direct answer over defaulting to the "incomplete information" fallback.
+
+### FINAL ANSWER ###
+"""
         try:
             response = self.model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=500,
+                    temperature=0.3,  # Increased for more nuanced responses
+                    max_output_tokens=800,  # Increased for more detailed answers
                 )
             )
             

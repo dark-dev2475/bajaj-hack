@@ -17,11 +17,11 @@ VM_OPTIMIZED_SETTINGS = {
     # Pinecone settings (cloud to cloud advantage)
     "upsert_batch_size": 100,  # Larger batches for cloud
     "max_connections": 8,  # More concurrent connections
-    "timeout": 45,  # Reasonable timeout
+    "timeout": 300,  # 5 minutes timeout
     
     # Answer generation
     "max_context_tokens": 3000,  # Balanced for speed
-    "gemini_timeout": 20,  # Faster timeout
+    "gemini_timeout": 300,  # 5 minutes timeout
     "temperature": 0.1,  # Lower for consistent speed
     
     # Memory settings (CPU VM)

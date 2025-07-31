@@ -148,7 +148,9 @@ class DocumentLoader:
             urls = [urls]
             
         results = []
-        async with aiohttp.ClientSession() as session:
+        # Create timeout configuration for 5 minutes
+        timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             tasks = [self._download_file(url, session) for url in urls]
             downloaded = await asyncio.gather(*tasks)
             
