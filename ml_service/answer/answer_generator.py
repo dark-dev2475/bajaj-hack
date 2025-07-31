@@ -4,71 +4,48 @@ import os
 import logging
 from typing import Optional, List, Dict, Any
 import asyncio
-
-# --- UPDATED IMPORTS ---
+from ..clients import gemini_llm
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
-from .answer_schema import FinalAnswer, Justification
-# --- END UPDATED IMPORTS ---
+from .answer_schema import FinalAnswer, Justification # Assuming schema is in this file
 
-
-# --- 1. Initialize LLMs and Chains ---
-# Using OpenAI's GPT model for better performance
+# --- 1. Initialize the Chat Model for Answer Generation ---
+# We create a specific LLM chain for this task.
+# Using a higher temperature (e.g., 0.2) can allow for more natural-sounding text.
 llm = ChatOpenAI(
-    model="gpt-4-1106-preview",  # Using GPT-4 Turbo for better accuracy
-    temperature=0.1,  # Low temperature for more focused and precise responses
-    streaming=True
+    model="gpt-4-turbo", # Using a more powerful model for the final answer is often a good idea
+    temperature=0.2,
+     # ✅ Explicitly set this
 )
+llm = gemini_llm 
 
-# --- Chain 1: Structured Answer Generation ---
-structured_parser = PydanticOutputParser(pydantic_object=FinalAnswer)
-structured_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are an expert insurance claims assistant with deep knowledge of policy analysis.
+# --- 2. Create the Answer Generation Chain ---
+# This chain will take the context and question, and force the LLM
+# to output a response that perfectly matches your FinalAnswer schema.
+structured_llm = llm.with_structured_output(FinalAnswer, method="function_calling")
 
-OBJECTIVE:
-- Analyze the provided policy clauses thoroughly
-- Provide clear, accurate, and well-reasoned decisions based on policy terms
-- Consider all relevant clauses when making decisions
-- Be precise and specific in your reasoning
+# --- 3. Define the System and Human Prompts ---
+# This template is cleaner and more maintainable than a large f-string.
+prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are an empathetic and highly accurate insurance claims assistant.
+Your task is to analyze the provided policy clauses and the user's query to produce a structured JSON response.
 
-GUIDELINES:
-- Always cite specific policy clauses that support your decision
-- Consider both coverage inclusions and exclusions
-- Explain any limitations or conditions that apply
-- Be direct and unambiguous in your decision
-
-{format_instructions}
+- Base your decision exclusively on the provided policy clauses.
+- Provide clear, step-by-step reasoning for your decision.
+- If you cannot determine a specific value (like PayoutAmount) from the text, leave it as null.
 """),
     ("human", """
-POLICY CLAUSES TO ANALYZE:
+---
+Policy Clauses:
 {context}
-
-USER QUERY ({query_language}):
-"{raw_query}"
-
-Please provide a structured analysis based on these policy clauses.
+---
+User Query ({query_language}): "{raw_query}"
+---
 """)
-]).partial(format_instructions=structured_parser.get_format_instructions())
-answer_chain = structured_prompt | llm | structured_parser
-
-
-# --- Chain 2: Summarization ---
-summary_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are a precise and concise insurance response summarizer.
-
-TASK:
-Create a 2-3 sentence summary that includes:
-1. The final decision (covered/not covered/partially covered)
-2. The key reason(s) for the decision
-3. Any critical conditions or limitations
-
-Be direct and use simple language that clients can easily understand.
-"""),
-    ("human", "Please summarize this insurance claim response:\n{full_response_text}")
 ])
-summary_chain = summary_prompt | llm | StrOutputParser()
 
+# --- 4. Combine into a Final Chain ---
+answer_chain = prompt | structured_llm
 
 # --- Helper function to format the context ---
 def _format_context(search_results: List[Dict[str, Any]]) -> str:
@@ -88,40 +65,26 @@ async def generate_answer_async(
     raw_query: str,
     search_results: List[Dict[str, Any]],
     query_language: str,
-) -> Dict[str, Any]:
+) -> Optional[FinalAnswer]:
     """
-    Generates a structured answer and its summary using LangChain chains.
-    Returns both the full structured answer and a concise summary.
+    Generates a structured answer using a LangChain chain.
     """
-    logging.info(f"Generating answer and summary for query: '{raw_query}'")
+    logging.info(f"Generating final answer for query: '{raw_query}'")
+
+    # Format the retrieved documents into a single context string.
     context = _format_context(search_results)
-    
+
     try:
-        # --- Step 1: Generate the full, structured answer ---
+        # Invoke the chain. LangChain handles the API call, JSON parsing,
+        # validation, and has built-in retry logic.
         final_answer = await answer_chain.ainvoke({
             "context": context,
             "raw_query": raw_query,
             "query_language": query_language.upper()
         })
-
-        # --- Step 2: Generate a concise summary from the full answer ---
-        # --- FIX: Correctly access attributes from the Pydantic model ---
-        full_text_for_summary = (
-            f"Decision: {final_answer.Decision}. "
-            f"Reasoning: {final_answer.Reasoning}"
-        )
-        # --- END OF FIX ---
-
-        summary = await summary_chain.ainvoke({"full_response_text": full_text_for_summary})
-
-        return {
-            "summary": summary,
-            "full_response": final_answer.model_dump()
-        }
-
+        return final_answer
+        
     except Exception as e:
         logging.exception(f"A critical error occurred during answer generation: {e}")
-        return {
-            "summary": "An error occurred while processing your query.",
-            "full_response": None
-        }
+        return None
+

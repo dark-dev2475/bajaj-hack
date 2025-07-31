@@ -10,7 +10,7 @@ async def translate_to_english_async(text: str, llm: BaseChatModel) -> str:
     
     Args:
         text: The text to translate.
-        llm: The OpenAI language model to use for translation.
+        llm: The language model (e.g., Gemini) to use for translation.
 
     Returns:
         The translated English text.

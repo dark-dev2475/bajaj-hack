@@ -1,9 +1,9 @@
 import logging
 from typing import List, Dict, Any
-from retriever import create_auto_merging_retriever
+from .retriever import create_auto_merging_retriever
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
-
+from pinecone import Pinecone, ServerlessSpec
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,6 +50,27 @@ class RAGPipeline:
         self.llm_model = llm_model
         
         logger.info("RAG Pipeline initialized successfully with Gemini Flash")
+    
+    def clear_vector_store(self) -> bool:
+        """
+        Delete all vectors from the specified namespace in the vector store.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Initialize Pinecone client
+            pc = Pinecone(api_key=self.retriever.pinecone_api_key)
+            index = pc.Index(self.retriever.index_name)
+            
+            # Delete all vectors in the namespace
+            index.delete(delete_all=True, namespace=self.retriever.namespace)
+            logger.info(f"Successfully cleared vector store namespace: {self.retriever.namespace}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error clearing vector store: {str(e)}")
+            return False
     
     def _format_context(self, retrieved_nodes: List[Dict]) -> str:
         """Format retrieved nodes into context string."""

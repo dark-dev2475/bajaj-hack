@@ -16,39 +16,26 @@ from .answering import generate_answers
 from query_parser.llm_extractor import extract_with_llm_async
 
 async def _extract_policy_type_from_doc(text: str) -> Optional[str]:
-    """
-    Uses OpenAI to extract the policy type from the document.
-    Optimized for accurate policy type identification.
-    """
-    # Take a larger context for better accuracy but not too large
-    snippet = text[:2000]  # Increased context window
-    logging.info("Extracting policy_type using OpenAI...")
+    """Uses an LLM to extract just the policy_type from the start of a document."""
+    # We only need the first ~1000 characters to find the policy type
+    snippet = text[:1000]
+    logging.info("Extracting policy_type from document snippet...")
     try:
-        # Using a more specific prompt for better accuracy
-        structured_query = (
-            "Analyze this insurance document and determine the exact policy type. "
-            "Common types include: health, life, motor, property, travel, or liability. "
-            "Focus on explicit policy type mentions in headers or opening paragraphs.\n\n"
-            f"Document start: {snippet}"
+        # We can reuse our query extractor for this task
+        extracted_data = await extract_with_llm_async(
+            f"What is the policy_type described in this document? Snippet: {snippet}"
         )
-        extracted_data = await extract_with_llm_async(structured_query)
-        
         if extracted_data and extracted_data.get("policy_type"):
             policy_type = extracted_data["policy_type"]
-            # Normalize and validate the policy type
+                        # --- THIS IS THE FIX: Normalize the extracted value ---
+            # Convert to lowercase and strip whitespace to ensure consistency.
             normalized_policy_type = policy_type.lower().strip()
-            # Ensure we have a valid policy type
-            valid_types = {"health", "life", "motor", "property", "travel", "liability"}
-            if any(valid_type in normalized_policy_type for valid_type in valid_types):
-                logging.info(f"Successfully extracted policy type: '{normalized_policy_type}'")
-                return normalized_policy_type
-            else:
-                logging.warning(f"Extracted policy type '{normalized_policy_type}' not in standard categories")
-                return "other"
+            logging.info(f"Extracted and normalized policy_type: '{normalized_policy_type}'")
+            return normalized_policy_type
+            # --- END OF FIX ---
     except Exception as e:
-        logging.error(f"Failed to extract policy_type using OpenAI: {e}")
-        # Return a default value for graceful handling
-        return "unspecified"
+        logging.error(f"Could not extract policy_type from document: {e}")
+    return None
 
 
 async def _ingest_document(
@@ -104,7 +91,7 @@ async def _ingest_document(
 
 
 async def handle_submission(
-    doc_url: str,
+    documents: List[str],
     questions: List[str],
     temp_dir: str,
     index_name: str,
@@ -116,7 +103,7 @@ async def handle_submission(
     namespace_id = f"rag-{int(start_total)}"
     logging.info(f"Starting new RAG pipeline with namespace_id: {namespace_id}")
 
-    save_path, filename = await async_download_file(doc_url, temp_dir)
+    save_path, filename = await async_download_file(documents, temp_dir)
     if not save_path:
         return [{"error": "Failed to download document."}] * len(questions)
 

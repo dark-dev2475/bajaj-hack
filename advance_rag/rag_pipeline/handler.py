@@ -4,12 +4,13 @@ import os
 import logging
 from typing import Dict, Any, List
 from pathlib import Path
+import pinecone
 
 # Import our custom RAG pipeline components
-from document_loader import DocumentLoader
-from parser import HierarchicalParser
-from embedder import HierarchicalEmbedder
-from answer import RAGPipeline
+from .document_loader import DocumentLoader
+from .parser import HierarchicalParser
+from .embedder import HierarchicalEmbedder
+from .answer import RAGPipeline
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -40,9 +41,10 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
         # Get environment variables
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
         pinecone_env = os.getenv("PINECONE_ENV")
-        google_api_key = os.getenv("GOOGLE_API_KEY")
+        google_api_key = os.getenv("GEMINI_API_KEY")
         
-        if not all([pinecone_api_key, pinecone_env, google_api_key]):
+        if not google_api_key:
+            logger.error(f"Missing GEMINI_API_KEY environment variable")
             raise ValueError("Missing required environment variables")
         
         # Step 1: Download the document
@@ -94,20 +96,19 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
             
             try:
                 answer_result = rag_pipeline.query(question)
-                answers.append({
-                    "question": question,
-                    "answer": answer_result["answer"],
-                    "context_used": answer_result.get("context", []),
-                    "status": "success"
-                })
+                # Extract only the answer text for the simplified response format
+                answers.append(answer_result["answer"])
             except Exception as e:
                 logger.error(f"Error answering question {i+1}: {str(e)}")
-                answers.append({
-                    "question": question,
-                    "answer": f"Error processing question: {str(e)}",
-                    "context_used": [],
-                    "status": "error"
-                })
+                # Return error message as a simple string to maintain consistency
+                answers.append(f"Error processing question: {str(e)}")
+        
+        # Step 6: Clear the vector store after all questions are processed
+        logger.info("Clearing vector store...")
+        if rag_pipeline.clear_vector_store():
+            logger.info("Vector store cleared successfully")
+        else:
+            logger.warning("Failed to clear vector store")
         
         logger.info(f"Successfully processed {len(questions)} questions")
         return answers

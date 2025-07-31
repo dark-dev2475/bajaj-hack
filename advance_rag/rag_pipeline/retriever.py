@@ -1,9 +1,9 @@
 import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
-from parser import HierarchicalNode
+from .parser import HierarchicalNode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,11 +36,8 @@ class BaseRetriever:
         self.similarity_top_k = similarity_top_k
         
         # Initialize Pinecone
-        pinecone.init(
-            api_key=pinecone_api_key,
-            environment=pinecone_environment
-        )
-        self.index = pinecone.Index(index_name)
+        self.pc = Pinecone(api_key=pinecone_api_key)
+        self.index = self.pc.Index(index_name)
         
         # Initialize embedding model
         self.embed_model = SentenceTransformer(model_name)

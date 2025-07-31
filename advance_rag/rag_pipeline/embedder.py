@@ -2,9 +2,9 @@ import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
 from tqdm import tqdm
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
-from parser import HierarchicalNode
+from .parser import HierarchicalNode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,20 +38,23 @@ class HierarchicalEmbedder:
         self.batch_size = batch_size
         
         # Initialize Pinecone
-        pinecone.init(
-            api_key=pinecone_api_key,
-            environment=pinecone_environment
-        )
+        self.pc = Pinecone(api_key=pinecone_api_key)
         
         # Get or create Pinecone index
         dimension = 384  # BGE-small dimension
-        if index_name not in pinecone.list_indexes():
-            pinecone.create_index(
+        existing_indexes = [index.name for index in self.pc.list_indexes()]
+        
+        if index_name not in existing_indexes:
+            self.pc.create_index(
                 name=index_name,
                 dimension=dimension,
-                metric="cosine"
+                metric="cosine",
+                spec=ServerlessSpec(
+                    cloud="aws",
+                    region="us-east-1"
+                )
             )
-        self.index = pinecone.Index(index_name)
+        self.index = self.pc.Index(index_name)
         
         # Initialize the embedding model
         logger.info(f"Loading embedding model {model_name}")

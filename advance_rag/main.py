@@ -4,6 +4,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from dotenv import load_dotenv
+load_dotenv()
 
 # Import the main pipeline handler
 from rag_pipeline.handler import handle_rag_request
