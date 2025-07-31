@@ -20,7 +20,7 @@ class HierarchicalEmbedder:
         index_name: str,
         namespace: str = "default",
         model_name: str = "BAAI/bge-small-en-v1.5",
-        batch_size: int = 32,  # Increased for faster processing
+        batch_size: int = 10,  # Increased for faster processing
         max_text_length: int = 400  # Reduced for faster embedding
     ):
         """
