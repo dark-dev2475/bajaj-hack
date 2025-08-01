@@ -26,8 +26,10 @@ class RAGPipeline:
         namespace: str = "default",
         similarity_top_k: int = 12,
     ):
+        generation_config = {"max_output_tokens": 256, "temperature": 0.2}
+        
         if not hasattr(Settings, 'llm'):
-            Settings.llm = Gemini(model="models/gemini-1.5-flash-latest", api_key=google_api_key)
+            Settings.llm = Gemini(model="models/gemini-1.5-flash-latest", api_key=google_api_key,generation_config=generation_config)
 
         retriever = create_auto_merging_retriever(
             pinecone_api_key=pinecone_api_key,
@@ -49,7 +51,8 @@ class RAGPipeline:
             "1.  **Analyze the Context:** Carefully read the entire context and the user's query.\n"
             "2.  **Synthesize Information:** Identify and connect all relevant pieces of information from the context, even if they are in different sections, to form a complete answer.\n"
             "3.  **Be Factual:** Your answer must be based ONLY on the provided context. Do not use any outside knowledge.\n"
-            "4.  **Handle Incomplete Information:**\n"
+            "4.  **Reason Step-by-Step:** First, understand the query. Then, synthesize information from all relevant parts of the context to construct your answer.\n"
+            "5.  **Handle Incomplete Information:**\n"
             "    - If the context fully answers the query, provide a direct and detailed answer.\n"
             "    - If the context provides only a partial answer, clearly state what can be answered and specify what information is missing. Do not make assumptions.\n"
             "    - If the context contains no relevant information, state that the answer cannot be found in the provided documents.\n\n"
