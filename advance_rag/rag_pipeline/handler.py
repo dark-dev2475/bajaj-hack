@@ -13,7 +13,9 @@ from .embedder import HierarchicalEmbedder
 from .retriever import create_auto_merging_retriever
 from .answer import RAGPipeline
 from dotenv import load_dotenv
-
+from llama_index.core import StorageContext
+# In handler.py
+from llama_index.core.node_parser import get_leaf_nodes
 # Load environment variables
 load_dotenv()
 
@@ -37,7 +39,6 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
     Returns:
         List of answers for each question
     """
-    
     try:
         # Get environment variables
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
@@ -61,36 +62,42 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
         
         # Step 2: Parse document into hierarchical structure
         logger.info("Parsing document into hierarchical chunks")
-        parser = HierarchicalParser(
-            chunk_sizes=[800, 400, 200],  # Accuracy-optimized values
-            chunk_overlap=50  # Added overlap for better continuity
-        )
-        hierarchical_nodes = parser.parse_document(file_path)
-        leaf_nodes = parser.get_leaf_nodes(hierarchical_nodes)
-        logger.info(f"Created {len(hierarchical_nodes)} top-level nodes, {len(leaf_nodes)} leaf nodes")
-        
-        # Step 3: Embed and store leaf nodes (for hierarchical auto-merging)
+        parser = HierarchicalParser() 
+        # This should return ALL nodes with parent/child relationships correctly linked
+        all_nodes = parser.parse_document(file_path)
+        leaf_nodes = get_leaf_nodes(all_nodes)
+        logger.info(f"Created {len(all_nodes)} total nodes, {len(leaf_nodes)} leaf nodes")
+
+        # --- NEW: Step 2.5: Create a Document Store ---
+        # This is the 'book' that holds the text of every single chunk.
+        # A simple dictionary mapping node_id -> node_object is perfect.
+        storage_context = StorageContext.from_defaults()
+        # Add all of your nodes to the docstore within this context
+        storage_context.docstore.add_documents(all_nodes)
+        logger.info(f"Created StorageContext with {len(all_nodes)} total nodes in its docstore.")
+
+        # Step 3: Embed leaf nodes
+        # Your embedder can be simplified to not need the docstore if the context is handled later
         logger.info("Embedding and storing leaf nodes in Pinecone")
         embedder = HierarchicalEmbedder(
             pinecone_api_key=pinecone_api_key,
-            pinecone_environment=pinecone_env,
+            # pinecone_environment=pinecone_env, # No longer needed by latest pinecone-client
             index_name=index_name,
-            namespace="documents"
+            namespace="documents",
+            docstore=storage_context.docstore,  # Pass the complete context
         )
-        # Remove await since embed_and_store is no longer async
-        embedder.embed_and_store(leaf_nodes)
-        logger.info("Successfully embedded and stored all nodes")
-        
-        # Step 4: Initialize RAG pipeline (it already creates AutoMergingRetriever internally)
-        logger.info("Initializing RAG pipeline with built-in LlamaIndex AutoMergingRetriever")
-        
+        embedder.embed_and_store(leaf_nodes) # This function should just focus on embedding
+        logger.info("Successfully embedded and stored leaf nodes")
+
+        # Step 4: Initialize RAG pipeline with the StorageContext
+        logger.info("Initializing RAG pipeline...")
         rag_pipeline = RAGPipeline(
             pinecone_api_key=pinecone_api_key,
-            pinecone_environment=pinecone_env,
             index_name=index_name,
             google_api_key=google_api_key,
             namespace="documents",
-            similarity_top_k=5  # Accuracy-optimized setting
+            similarity_top_k=5,
+            storage_context=storage_context  # CRITICAL: Pass the complete context object
         )
         
         logger.info("RAG pipeline initialized with enhanced auto-merging capabilities")
@@ -114,10 +121,6 @@ async def handle_rag_request(document_url: str, questions: List[str], upload_fol
                 # Return error message as a simple string to maintain consistency
                 answers.append(f"Error processing question: {str(e)}")
        
-      
-
-
-        
         # Step 6: Clear the vector store after all questions are processed
         logger.info("Clearing vector store...")
         try:

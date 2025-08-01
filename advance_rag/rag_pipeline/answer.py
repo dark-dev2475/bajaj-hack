@@ -3,6 +3,9 @@ from typing import List, Dict, Any
 from .retriever import create_auto_merging_retriever
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core import StorageContext
+# Import Pinecone for vector store operations
 from pinecone import Pinecone
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -11,49 +14,53 @@ logger = logging.getLogger(__name__)
 class RAGPipeline:
     """Complete RAG pipeline that retrieves context and generates answers."""
     
-    def __init__(
-        self,
-        pinecone_api_key: str,
-        pinecone_environment: str,
-        index_name: str,
-        google_api_key: str,
-        namespace: str = "default",
-        similarity_top_k: int = 5,  # Increased for more comprehensive context
-        llm_model: str = "gemini-1.5-flash"
-    ):
-        """
-        Initialize the complete RAG pipeline.
-        
-        Args:
-            pinecone_api_key: Pinecone API key
-            pinecone_environment: Pinecone environment
-            index_name: Pinecone index name
-            google_api_key: Google API key for Gemini Flash
-            namespace: Pinecone namespace
-            similarity_top_k: Number of documents to retrieve
-            llm_model: Gemini model for answer generation
-        """
-        # Initialize retriever
-        self.retriever = create_auto_merging_retriever(
-            pinecone_api_key=pinecone_api_key,
-            pinecone_environment=pinecone_environment,
-            index_name=index_name,
-            namespace=namespace,
-            similarity_top_k=similarity_top_k,
-            simple_ratio_thresh=0.0,
-            verbose=True
-        )
-        
-        # Initialize Gemini
-        genai.configure(api_key=google_api_key)
-        self.model = genai.GenerativeModel(llm_model)
-        self.llm_model = llm_model
-        
-        # Log retriever type for verification
-        retriever_type = type(self.retriever).__name__
-        logger.info(f"RAG Pipeline initialized with {retriever_type} - AutoMerging: {'AutoMerging' in retriever_type}")
-        logger.info("RAG Pipeline initialized successfully with Gemini Flash")
+  # Inside your RAGPipeline class:
+# In answer.py, inside the RAGPipeline class
+
+def __init__(
+    self,
+    pinecone_api_key: str,
+    index_name: str,
+    google_api_key: str,
+    storage_context: Any, # Or from llama_index.core import StorageContext
+    namespace: str = "default",
+    similarity_top_k: int = 5,
+    llm_model: str = "gemini-1.5-flash",
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+):
+    """
+    Initialize the complete RAG pipeline.
+    """
+    genai.configure(api_key=google_api_key)
+    self.model = genai.GenerativeModel(llm_model)
+    self.llm_model = llm_model
+    # Initialize the embedding model
+    logger.info(f"Initializing embedding model: {embedding_model}")
+    self.embedding_model = HuggingFaceEmbedding(
+        model_name=embedding_model
+        # CRITICAL FIX: Removed the invalid 'api_key' argument.
+        # HuggingFaceEmbedding is a local model and does not need an API key.
+    )
+
     
+    # Initialize retriever, now passing the essential storage_context
+    self.retriever = create_auto_merging_retriever(
+        pinecone_api_key=pinecone_api_key,
+        index_name=index_name,
+        storage_context=storage_context, # Pass it here
+        namespace=namespace,
+        similarity_top_k=similarity_top_k,
+        embedding_model=embedding_model,
+        verbose=True
+    )
+    
+    # Initialize Gemini
+  
+    # Log retriever type for verification
+    retriever_type = type(self.retriever).__name__
+    logger.info(f"RAG Pipeline initialized with {retriever_type}")
+    logger.info("RAG Pipeline initialized successfully with Gemini Flash")
+
     def clear_vector_store(self) -> bool:
         """
         Delete all vectors from the specified namespace in the vector store.
@@ -141,56 +148,6 @@ class RAGPipeline:
         prompt = f"""
 You are a senior policy analyst tasked with generating a fact-based, legally accurate answer using only the provided policy documents. Analyze and synthesize all relevant information carefully.
 
----
-
-### 📄 SOURCES:
-{context}
-
----
-
-### ❓ QUESTION:
-{query}
-
----
-
-### ✅ INSTRUCTIONS:
-
-1. **Start with a Direct Answer:**
-   - Derive a clear, comprehensive response based *strictly on the text* in the sources.
-   - Include every *eligibility criteria, clause, threshold, or condition* mentioned — even if scattered across sections.
-   - Use specific terminology and short quotes from the source when helpful.
-   - Maintain formality, clarity, and legal accuracy in tone.
-
-2. **If Full Answer is Not Found:**
-   - Explicitly state: **"Answer not fully specified in the document."**
-   - Then add a **`Related Findings:`** section with partially relevant or contextually related details, if available.
-
----
-
-### 🔍 REQUIRED CONTENT IF PRESENT IN SOURCES:
-- Definitions (e.g., “Hospital”, “Dependent”).
-- Eligibility criteria, conditions, age/income limits.
-- Time-bound clauses (e.g., “after 6 months”, “every 3 years”).
-- Roles and responsibilities (e.g., who may apply, who administers).
-- Exclusions, exceptions, restrictions, limitations.
-- Frequencies, timelines, deadlines.
-
----
-
-### ❌ DO NOT:
-- Do not make assumptions or add information not in the sources.
-- Do not summarize vaguely — be precise and complete.
-- Do not answer if the sources do not support the response.
-
----
-
-### 📌 FORMAT:
-
-**Final Answer:**  
-[Insert direct, concise answer here.]
-
-**Related Findings (if needed):**  
-- [Bullet points or context from source if direct answer is missing.]
 """
 
         try:
@@ -279,18 +236,3 @@ def create_rag_pipeline(
         **kwargs
     )
 
-# Example usage:
-"""
-# Initialize pipeline with Gemini Flash
-rag = create_rag_pipeline(
-    pinecone_api_key="your-pinecone-key",
-    pinecone_environment="your-env",
-    index_name="your-index",
-    google_api_key="your-google-api-key"
-)
-
-# Ask questions
-result = rag.query("What is covered under my health insurance policy?")
-print(f"Answer: {result['answer']}")
-print(f"Based on {result['retrieval_count']} retrieved documents")
-"""

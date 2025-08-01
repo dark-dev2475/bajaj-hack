@@ -4,238 +4,117 @@ import numpy as np
 from tqdm import tqdm
 from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
+# Assumes your HierarchicalNode is in this file
 from .parser import HierarchicalNode
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class HierarchicalEmbedder:
-    """Embeds hierarchical nodes using BGE embeddings and stores them in Pinecone."""
-    
+    """
+    Embeds hierarchical leaf nodes and stores them in Pinecone,
+    while ensuring all nodes are accessible in a document store.
+    """
     def __init__(
         self,
         pinecone_api_key: str,
-        pinecone_environment: str,
         index_name: str,
+        # NEW: Pass in a document store that holds ALL nodes.
+        docstore: Dict[str, HierarchicalNode],
         namespace: str = "default",
         model_name: str = "BAAI/bge-small-en-v1.5",
-        batch_size: int = 16,  # Accuracy-optimized for better results
-        max_text_length: int = 800  # Increased for richer context
+        batch_size: int = 16
     ):
-        """
-        Initialize the embedder with Pinecone and HuggingFace settings.
-        
-        Args:
-            pinecone_api_key: Pinecone API key
-            pinecone_environment: Pinecone environment
-            index_name: Name of the Pinecone index
-            namespace: Namespace within the index
-            model_name: HuggingFace model name for embeddings
-            batch_size: Batch size for embedding generation
-        """
         self.index_name = index_name
         self.namespace = namespace
         self.batch_size = batch_size
-        self.max_text_length = max_text_length
+        # NEW: Store the document store
+        self.docstore = docstore
+
+        # Initialize the embedding model
+        logger.info(f"Loading embedding model {model_name}")
+        self.embed_model = SentenceTransformer(model_name)
         
+        # NEW: Get embedding dimension dynamically
+        self.dimension = self.embed_model.get_sentence_embedding_dimension()
+
         # Initialize Pinecone
         self.pc = Pinecone(api_key=pinecone_api_key)
         
         # Get or create Pinecone index
-        dimension = 384  # BGE-small dimension
-        existing_indexes = [index.name for index in self.pc.list_indexes()]
-        
-        if index_name not in existing_indexes:
+        if index_name not in self.pc.list_indexes().names():
+            logger.info(f"Creating new Pinecone index: {index_name} with dimension {self.dimension}")
             self.pc.create_index(
                 name=index_name,
-                dimension=dimension,
+                dimension=self.dimension, # Use dynamic dimension
                 metric="cosine",
-                spec=ServerlessSpec(
-                    cloud="aws",
-                    region="us-east-1"
-                )
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
         self.index = self.pc.Index(index_name)
-        
-        # Initialize the embedding model
-        logger.info(f"Loading embedding model {model_name}")
-        self.embed_model = SentenceTransformer(model_name)
-    
-    def _normalize_vector(self, vector: np.ndarray) -> np.ndarray:
-        """Normalize vector to unit length."""
-        norm = np.linalg.norm(vector)
-        if norm == 0:
-            return vector
-        return vector / norm
-    
-    def _truncate_text(self, text: str) -> str:
-        """Truncate text to maximum length while preserving complete sentences."""
-        if len(text) <= self.max_text_length:
-            return text.strip()
-        
-        # Clean up the text first
-        text = text.strip()
-        
-        # Try to find a good sentence boundary within the limit
-        truncated = text[:self.max_text_length]
-        
-        # Look for sentence endings in order of preference
-        sentence_endings = ['. ', '! ', '? ']
-        
-        for delimiter in sentence_endings:
-            last_pos = truncated.rfind(delimiter)
-            if last_pos > self.max_text_length * 0.6:  # At least 60% of target length
-                # Include the delimiter and return clean sentence
-                result = truncated[:last_pos + 1].strip()
-                # Remove any trailing incomplete parts
-                if result and not result.endswith(('.', '!', '?')):
-                    result += '.'
-                return result
-        
-        # If no sentence boundary found, try paragraph breaks
-        last_para = truncated.rfind('\n')
-        if last_para > self.max_text_length * 0.5:
-            result = truncated[:last_para].strip()
-            if result and not result.endswith(('.', '!', '?')):
-                result += '.'
-            return result
-        
-        # Fallback: find last complete word and ensure proper ending
-        words = truncated.split()
-        if len(words) > 1:
-            # Remove last word to avoid cutoffs
-            result = ' '.join(words[:-1]).strip()
-            # Ensure it ends properly
-            if result and not result.endswith(('.', '!', '?')):
-                result += '.'
-            return result
-        
-        # Last resort: return truncated text with proper ending
-        result = truncated.strip()
-        if result and not result.endswith(('.', '!', '?')):
-            result += '.'
-        return result
-    
+
     def _create_pinecone_vectors(
         self,
         nodes: List[HierarchicalNode],
-        batch_texts: List[str],
         embeddings: np.ndarray
     ) -> List[Dict]:
         """Create vector records for Pinecone insertion."""
         vectors = []
-        for node, text, embedding in zip(nodes, batch_texts, embeddings):
-            # Clean the text one more time before storing
-            clean_text = text.strip()
+        for node, embedding in zip(nodes, embeddings):
+            node_id = node.id_
+            if not node_id:
+                logger.warning("Node missing stable ID, skipping.")
+                continue
+
+            # --- CRITICAL FIX: Add parent_id to metadata ---
+            parent_id = node.parent_node.node_id if node.parent_node else None
             
-            # Use stable ID from metadata (assigned during parsing)
-            node_id = node.metadata.get('id', f"fallback_{hash(clean_text)}")
-            if node_id.startswith('fallback_'):
-                logger.warning(f"Node missing stable ID, using fallback: {node_id}")
-            
-            # Create vector record with normalized embeddings (already normalized by encode())
-            vector = {
-                "id": node_id,
-                "values": embedding.tolist(),  # Already normalized, no need for _normalize_vector
-                "metadata": {
-                    **node.metadata,
-                    "text": clean_text,
-                    "level": node.level,
-                    "model": "bge-small-en-v1.5"
-                }
+            # --- BEST PRACTICE: Don't store full text in vector metadata ---
+            # The text can be retrieved from the docstore using the ID.
+            metadata_for_pinecone = {
+                # Copy existing metadata
+                **node.metadata,
+                # Add parent_id for the auto-merging retriever
+                "parent_id": parent_id,
+                # Remove redundant fields if they exist to save space
+                "children": None,
+                "parent": None
             }
-            vectors.append(vector)
+            # Clean up any None values
+            metadata_for_pinecone = {k: v for k, v in metadata_for_pinecone.items() if v is not None}
+
+            vectors.append({
+                "id": node_id,
+                "values": embedding.tolist(),
+                "metadata": metadata_for_pinecone
+            })
         return vectors
-    
-    def embed_and_store(self, leaf_nodes: List[HierarchicalNode]) -> None:
-        """
-        Embed leaf nodes and store them in Pinecone.
+
+    def embed_and_store(self, leaf_nodes: List[HierarchicalNode]):
+        """Embeds ONLY leaf nodes and stores their vectors in Pinecone."""
+        logger.info(f"Embedding and storing {len(leaf_nodes)} leaf nodes into Pinecone.")
         
-        Args:
-            leaf_nodes: List of leaf nodes to embed and store
-        """
-        logger.info(f"Embedding and storing {len(leaf_nodes)} leaf nodes")
-        
-        # Process in batches
-        for i in tqdm(range(0, len(leaf_nodes), self.batch_size)):
+        for i in tqdm(range(0, len(leaf_nodes), self.batch_size), desc="Embedding Batches"):
             batch_nodes = leaf_nodes[i:i + self.batch_size]
-            batch_texts = [self._truncate_text(node.content) for node in batch_nodes]  # Truncate texts
+            # It's better to embed the full, untruncated content of the leaf node
+            batch_texts = [node.text for node in batch_nodes]
             
             try:
-                # Generate embeddings (already normalized)
+                # Generate embeddings
                 embeddings = self.embed_model.encode(
                     batch_texts,
-                    normalize_embeddings=True  # Ensures unit length normalization
+                    normalize_embeddings=True
                 )
                 
-                # Create Pinecone vector records
-                vectors = self._create_pinecone_vectors(
-                    batch_nodes,
-                    batch_texts,
-                    embeddings
-                )
+                # Create Pinecone vector records with correct metadata
+                vectors = self._create_pinecone_vectors(batch_nodes, embeddings)
                 
+                if not vectors:
+                    continue
+
                 # Upsert to Pinecone
-                self.index.upsert(
-                    vectors=vectors,
-                    namespace=self.namespace
-                )
-                
+                self.index.upsert(vectors=vectors, namespace=self.namespace)
             except Exception as e:
-                logger.error(f"Error processing batch {i}: {str(e)}")
+                logger.error(f"Error processing batch starting at index {i}: {e}")
                 continue
         
-        logger.info("Successfully embedded and stored all leaf nodes")
-    
-    def similarity_search(
-        self,
-        query: str,
-        top_k: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        Perform similarity search using the query.
-        
-        Args:
-            query: Query text
-            top_k: Number of results to return
-            
-        Returns:
-            List of matching documents with scores
-        """
-        logger.info(f"Vector DB Query - Searching for top_{top_k} results for query: '{query[:50]}...'")
-        
-        # Generate query embedding
-        truncated_query = self._truncate_text(query)  # Truncate query too
-        query_embedding = self.embed_model.encode(
-            truncated_query,
-            normalize_embeddings=True
-        )
-        
-        # Search Pinecone
-        results = self.index.query(
-            vector=query_embedding.tolist(),
-            namespace=self.namespace,
-            top_k=top_k,
-            include_metadata=True
-        )
-        
-        # Log vector database hit details
-        hits_count = len(results.matches)
-        logger.info(f"Vector DB Hit - Retrieved {hits_count}/{top_k} matches from namespace '{self.namespace}'")
-        
-        if hits_count > 0:
-            scores = [match.score for match in results.matches]
-            avg_score = sum(scores) / len(scores)
-            logger.info(f"Vector DB Scores - Min: {min(scores):.4f}, Max: {max(scores):.4f}, Avg: {avg_score:.4f}")
-        else:
-            logger.warning("Vector DB Hit - No matches found in vector database")
-        
-        return [
-            {
-                "score": match.score,
-                "text": match.metadata["text"],
-                "metadata": match.metadata
-            }
-            for match in results.matches
-        ]
+        logger.info("Successfully embedded and stored all leaf nodes.")

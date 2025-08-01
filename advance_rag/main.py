@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import the main pipeline handler
-from rag_pipeline.handler import handle_rag_request
+from rag_pipeline2.handler import handle_rag_request
 from rag_pipeline.pts_handler import handle_pts_rag_request
 
 # --- Configuration ---

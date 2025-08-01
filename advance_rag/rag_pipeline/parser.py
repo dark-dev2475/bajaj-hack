@@ -17,6 +17,7 @@ from langchain.document_loaders import (
 # LlamaIndex imports for hierarchical parsing
 try:
     from llama_index.core.node_parser import HierarchicalNodeParser
+    from llama_index.core.node_parser import get_leaf_nodes
     from llama_index.core.schema import TextNode, BaseNode, Document as LlamaDocument
     LLAMAINDEX_AVAILABLE = True
 except ImportError as e:
@@ -101,15 +102,7 @@ class HierarchicalParser:
             logger.error(f"Error loading document {file_path}: {str(e)}")
             raise
     
-    def _create_hierarchical_nodes(
-        self,
-        text: str,
-        metadata: Dict[str, Any],
-        level: int = 0,
-        parent: Optional[HierarchicalNode] = None
-    ) -> List[HierarchicalNode]:
-        """This method is no longer used - kept for compatibility."""
-        raise NotImplementedError("Custom hierarchical parsing removed. Use LlamaIndex only.")
+   
     
     def parse_document(self, file_path: str) -> List[HierarchicalNode]:
         """
@@ -141,49 +134,16 @@ class HierarchicalParser:
             llama_nodes = self.llama_parser.get_nodes_from_documents(llama_docs)
             
             # Convert LlamaIndex nodes to our HierarchicalNode format for compatibility
-            hierarchical_nodes = []
-            for llama_node in llama_nodes:
-                # Extract level from metadata or node type
-                level = llama_node.metadata.get('level', 0)
+           
                 
-                # Ensure stable ID exists
-                node_id = getattr(llama_node, 'id_', str(uuid.uuid4()))
                 
-                node_metadata = {
-                    **llama_node.metadata,
-                    "id": node_id,
-                    "level": level,
-                    "source": file_path
-                }
-                
-                hierarchical_node = HierarchicalNode(
-                    content=llama_node.text,
-                    metadata=node_metadata,
-                    level=level
-                )
-                hierarchical_nodes.append(hierarchical_node)
-            
-            logger.info(f"LlamaIndex parsed {len(hierarchical_nodes)} hierarchical nodes")
-            return hierarchical_nodes
+            return llama_nodes
             
         except Exception as e:
             logger.exception(f"Error parsing document {file_path}: {str(e)}")
             raise
     
-    def get_leaf_nodes(self, nodes: List[HierarchicalNode]) -> List[HierarchicalNode]:
-        """Get all leaf nodes (nodes without children) from the hierarchy."""
-        leaves = []
-        
-        def collect_leaves(node):
-            if not node.children:
-                leaves.append(node)
-            for child in node.children:
-                collect_leaves(child)
-        
-        for node in nodes:
-            collect_leaves(node)
-        
-        return leaves
+   
     
     def get_nodes_by_level(self, nodes: List[HierarchicalNode], level: int) -> List[HierarchicalNode]:
         """Get all nodes at a specific level in the hierarchy."""
