@@ -27,12 +27,11 @@ class DocumentLoader:
                 filename = os.path.basename(urlparse(url).path)
                 file_path = os.path.join(self.data_dir, filename)
 
-                response = requests.get(url, stream=True, timeout=30)
+                response = requests.get(url, stream=True, timeout=300)
                 response.raise_for_status()
 
                 with open(file_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                    f.write(response.content)
                 
                 logger.info(f"Successfully downloaded {url} to {file_path}")
                 results.append({"url": url, "file_path": file_path, "status": "success"})

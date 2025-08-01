@@ -40,15 +40,21 @@ class RAGPipeline:
         # --- THIS IS THE FIX ---
         # Define a strict prompt template
         qa_prompt_tmpl_str = (
-            "Context information is below.\n"
+             "You are an expert Research Analyst. Your task is to provide a comprehensive, fact-based answer "
+            "to the user's query based exclusively on the provided context.\n"
             "---------------------\n"
-            "{context_str}\n"
+            "CONTEXT:\n{context_str}\n"
             "---------------------\n"
-            "You are a helpful assistant. Based ONLY on the provided context information and not on any prior knowledge, "
-            "answer the query.\n"
-            "If the context does not contain the answer, you MUST state that you cannot answer with the given information.\n"
-            "Query: {query_str}\n"
-            "Answer: "
+            "INSTRUCTIONS:\n"
+            "1.  **Analyze the Context:** Carefully read the entire context and the user's query.\n"
+            "2.  **Synthesize Information:** Identify and connect all relevant pieces of information from the context, even if they are in different sections, to form a complete answer.\n"
+            "3.  **Be Factual:** Your answer must be based ONLY on the provided context. Do not use any outside knowledge.\n"
+            "4.  **Handle Incomplete Information:**\n"
+            "    - If the context fully answers the query, provide a direct and detailed answer.\n"
+            "    - If the context provides only a partial answer, clearly state what can be answered and specify what information is missing. Do not make assumptions.\n"
+            "    - If the context contains no relevant information, state that the answer cannot be found in the provided documents.\n\n"
+            "QUERY: {query_str}\n\n"
+            "ANSWER (Based only on the context provided):\n"
         )
         qa_prompt_tmpl = PromptTemplate(qa_prompt_tmpl_str)
 

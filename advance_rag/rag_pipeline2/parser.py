@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class HierarchicalParser:
     """Parses documents into a hierarchical structure using LlamaIndex."""
 
-    def __init__(self, chunk_sizes: List[int] = [1024, 512, 256]):
+    def __init__(self, chunk_sizes: List[int] = [1024, 512, 128]):
         self.node_parser = HierarchicalNodeParser.from_defaults(
             chunk_sizes=chunk_sizes,
             chunk_overlap=16
