@@ -1,11 +1,14 @@
 # Hack Bajaj Project
 
-This repository contains the codebase for the Hack Bajaj project, which is organized into multiple services:
+This repository contains my experiments with rag applications.
+It contains the llamaindex hierarrichal node parser and autormerging retriever , also contains rag app made with fast api and langchain.
+The very advance parent to sentence node parsser fo rrthe best results ,, got to learn all these by a tragedy.
 
 ## Folders
 
 - **api_server/**: Node.js backend server.
 - **ml_service/**: Python-based machine learning service.
+-  **advance-rag.
 
 ## Setup
 
