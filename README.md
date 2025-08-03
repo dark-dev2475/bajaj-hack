@@ -1,4 +1,4 @@
-# Hack Bajaj Project
+# RAG projects
 
 This repository contains my experiments with rag applications.
 It contains the llamaindex hierarrichal node parser and autormerging retriever , also contains rag app made with fast api and langchain.
